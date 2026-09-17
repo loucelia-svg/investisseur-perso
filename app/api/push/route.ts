@@ -1,23 +1,32 @@
 import { NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
-
-const subscriptionFile = path.join(
-  process.cwd(),
-  "push-subscription.json"
-);
+import { supabase } from "@/lib/supabase";
 
 export async function POST(request: Request) {
   try {
     const subscription = await request.json();
 
-    await fs.writeFile(
-      subscriptionFile,
-      JSON.stringify(subscription, null, 2),
-      "utf8"
-    );
+    const { error } = await supabase
+      .from("push_subscriptions")
+      .upsert(
+        {
+          endpoint: subscription.endpoint,
+          subscription,
+        },
+        {
+          onConflict: "endpoint",
+        }
+      );
 
-    console.log("Abonnement push enregistré.");
+    if (error) {
+      console.error("Erreur Supabase :", error);
+
+      return NextResponse.json(
+        { error: "Impossible d'enregistrer l'abonnement" },
+        { status: 500 }
+      );
+    }
+
+    console.log("Abonnement push enregistré dans Supabase.");
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -32,23 +41,39 @@ export async function POST(request: Request) {
 
 export async function GET() {
   try {
-    const data = await fs.readFile(subscriptionFile, "utf8");
+    const { data, error } = await supabase
+      .from("push_subscriptions")
+      .select("*");
 
-    return NextResponse.json(JSON.parse(data));
-  } catch {
+    if (error) {
+      console.error("Erreur Supabase :", error);
+
+      return NextResponse.json(
+        { error: "Impossible de récupérer les abonnements" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(data);
+  } catch (error) {
+    console.error("Erreur lors de la récupération :", error);
+
     return NextResponse.json(
-      { error: "Aucun abonnement push enregistré" },
-      { status: 404 }
+      { error: "Impossible de récupérer les abonnements" },
+      { status: 500 }
     );
   }
 }
 
-export async function getPushSubscription() {
-  try {
-    const data = await fs.readFile(subscriptionFile, "utf8");
+export async function getPushSubscriptions() {
+  const { data, error } = await supabase
+    .from("push_subscriptions")
+    .select("subscription");
 
-    return JSON.parse(data);
-  } catch {
-    return null;
+  if (error) {
+    console.error("Erreur Supabase :", error);
+    return [];
   }
+
+  return data.map((row) => row.subscription);
 }

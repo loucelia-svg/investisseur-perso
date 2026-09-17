@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import webpush from "web-push";
-import { getPushSubscription } from "../route";
+import { getPushSubscriptions } from "../route";
 
 export async function GET() {
-  const subscription = await getPushSubscription();
+  const subscriptions = await getPushSubscriptions();
 
-  if (!subscription) {
+  if (subscriptions.length === 0) {
     return NextResponse.json(
       { error: "Aucun abonnement push enregistré" },
       { status: 404 }
@@ -18,16 +18,26 @@ export async function GET() {
     process.env.VAPID_PRIVATE_KEY!
   );
 
-  try {
-    await webpush.sendNotification(
-      subscription as webpush.PushSubscription,
-      JSON.stringify({
-        title: "Investisseur Perso",
-        body: "🎉 Test réussi ! Les notifications push fonctionnent.",
-      })
-    );
+  let sent = 0;
 
-    return NextResponse.json({ success: true });
+  try {
+    for (const subscription of subscriptions) {
+      await webpush.sendNotification(
+        subscription as webpush.PushSubscription,
+        JSON.stringify({
+          title: "Investisseur Perso",
+          body: "🎉 Test réussi ! Les notifications push fonctionnent.",
+        })
+      );
+
+      sent++;
+    }
+
+    return NextResponse.json({
+      success: true,
+      sent,
+      total: subscriptions.length,
+    });
   } catch (error) {
     console.error("Erreur d'envoi push :", error);
 

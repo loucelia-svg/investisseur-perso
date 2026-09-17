@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import webpush from "web-push";
-import { getPushSubscription } from "../push/route";
+import { getPushSubscriptions } from "../push/route";
 
 webpush.setVapidDetails(
   "mailto:loucelia.germond@gmail.com",
@@ -9,25 +9,43 @@ webpush.setVapidDetails(
 );
 
 export async function POST() {
-  const subscription = await getPushSubscription();
+  const subscriptions = await getPushSubscriptions();
 
-  if (!subscription) {
+  if (subscriptions.length === 0) {
     return NextResponse.json(
       { error: "Aucun abonnement enregistré" },
       { status: 404 }
     );
   }
 
-  await webpush.sendNotification(
-    subscription,
-    JSON.stringify({
-      title: "Investisseur Perso",
-      body: "Ceci est une notification de test 🎉",
-    })
-  );
+  let sent = 0;
 
-  return NextResponse.json({ success: true });
+  for (const subscription of subscriptions) {
+    try {
+      await webpush.sendNotification(
+        subscription,
+        JSON.stringify({
+          title: "Investisseur Perso",
+          body: "Ceci est une notification de test 🎉",
+        })
+      );
+
+      sent++;
+    } catch (error) {
+      console.error(
+        "Erreur lors de l'envoi de la notification :",
+        error
+      );
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    sent,
+    total: subscriptions.length,
+  });
 }
+
 export async function GET() {
   return POST();
 }
