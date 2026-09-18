@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import webpush from "web-push";
 import { getPushSubscriptions } from "../route";
+import { supabase } from "@/lib/supabase";
 
 export async function GET() {
   const subscriptions = await getPushSubscriptions();
@@ -19,9 +20,10 @@ export async function GET() {
   );
 
   let sent = 0;
+  let removed = 0;
 
-  try {
-    for (const subscription of subscriptions) {
+  for (const subscription of subscriptions) {
+    try {
       await webpush.sendNotification(
         subscription as webpush.PushSubscription,
         JSON.stringify({
@@ -31,19 +33,32 @@ export async function GET() {
       );
 
       sent++;
+    } catch (error: any) {
+      console.error("Erreur d'envoi push :", error);
+
+      if (error.statusCode === 410) {
+        const { error: deleteError } = await supabase
+          .from("push_subscriptions")
+          .delete()
+          .eq("endpoint", subscription.endpoint);
+
+        if (deleteError) {
+          console.error(
+            "Erreur lors de la suppression de l'abonnement :",
+            deleteError
+          );
+        } else {
+          removed++;
+          console.log("Abonnement push expiré supprimé de Supabase.");
+        }
+      }
     }
-
-    return NextResponse.json({
-      success: true,
-      sent,
-      total: subscriptions.length,
-    });
-  } catch (error) {
-    console.error("Erreur d'envoi push :", error);
-
-    return NextResponse.json(
-      { error: "Impossible d'envoyer la notification" },
-      { status: 500 }
-    );
   }
+
+  return NextResponse.json({
+    success: true,
+    sent,
+    removed,
+    total: subscriptions.length,
+  });
 }
