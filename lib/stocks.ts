@@ -7,6 +7,7 @@ export const stocks = [
     statusColor: "bg-yellow-100 text-yellow-800",
     alerts: [390, 370],
     tradingDateTime: undefined as string | undefined,
+    tradingViewSymbol: "EURONEXT:MC",
   },
 
   {
@@ -17,5 +18,6 @@ export const stocks = [
     statusColor: "bg-orange-100 text-orange-800",
     alerts: [1250],
     tradingDateTime: undefined as string | undefined,
+    tradingViewSymbol: "EURONEXT:RMS",
   },
 ];
