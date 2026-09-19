@@ -38,7 +38,11 @@ export async function getFundamentals(
   const [firstYear, remainingYears] =
     await Promise.all(requests);
 
-  const data = [...firstYear, ...remainingYears];
+  const data = [...firstYear, ...remainingYears] as Array<
+    Record<string, any> & {
+      date: Date;
+    }
+  >;
 
   return data
     .filter((item) => {
