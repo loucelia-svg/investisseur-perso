@@ -216,7 +216,9 @@ export default function Home() {
 
                     </div>
 
-                    <InvestmentCriteria company={stock.name} />
+                    <InvestmentCriteria
+  company={stock.name}
+/>
 
                     <div className="mt-6 overflow-hidden rounded-xl border border-slate-200">
                       <TradingViewChart

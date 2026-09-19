@@ -1,14 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import localFont from "next/font/local";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+
+const unifraktur = localFont({
+  src: "../fonts/UnifrakturMaguntia-Book.ttf",
+  display: "swap",
+});
 
 type AnnualFundamental = {
   year: number;
   revenue: number | null;
 };
 
-export default function GraphiquesPage() {
+function GraphiquesContent() {
   const searchParams = useSearchParams();
 
   const company = searchParams.get("company");
@@ -39,12 +45,16 @@ export default function GraphiquesPage() {
 
   const maxRevenue =
     revenueData.length > 0
-      ? Math.max(...revenueData.map((item) => item.revenue ?? 0))
+      ? Math.max(
+          ...revenueData.map((item) => item.revenue ?? 0)
+        )
       : 0;
 
   const minRevenue =
     revenueData.length > 0
-      ? Math.min(...revenueData.map((item) => item.revenue ?? 0))
+      ? Math.min(
+          ...revenueData.map((item) => item.revenue ?? 0)
+        )
       : 0;
 
   const chartWidth = 900;
@@ -106,7 +116,9 @@ export default function GraphiquesPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-7xl">
-        <h1 className="text-3xl font-bold text-slate-900">
+        <h1
+          className={`${unifraktur.className} text-4xl font-normal text-slate-900`}
+        >
           📊 Graphiques
         </h1>
 
@@ -253,5 +265,23 @@ export default function GraphiquesPage() {
         )}
       </div>
     </main>
+  );
+}
+
+export default function GraphiquesPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-slate-50 p-6">
+          <div className="mx-auto max-w-7xl">
+            <div className="rounded-xl border border-slate-200 bg-white p-6 text-slate-500">
+              Chargement du graphique…
+            </div>
+          </div>
+        </main>
+      }
+    >
+      <GraphiquesContent />
+    </Suspense>
   );
 }

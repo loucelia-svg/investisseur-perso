@@ -30,12 +30,10 @@ type Criterion = {
 
 type InvestmentCriteriaProps = {
   company: string;
-  symbol: string;
 };
 
 export default function InvestmentCriteria({
   company,
-  symbol,
 }: InvestmentCriteriaProps) {
   const router = useRouter();
 
@@ -159,9 +157,6 @@ export default function InvestmentCriteria({
 
     const sortedData = [...data].sort((a, b) => a.year - b.year);
 
-    // ------------------------------------------------------------
-    // 1. Croissance du chiffre d'affaires
-    // ------------------------------------------------------------
     if (id === 1) {
       const first = sortedData[0];
       const last = sortedData[sortedData.length - 1];
@@ -178,13 +173,8 @@ export default function InvestmentCriteria({
       };
     }
 
-    // ------------------------------------------------------------
-    // 2. Dette nette / Free Cash Flow
-    //
-    // IMPORTANT :
-    // Le critère définitif doit utiliser le DERNIER TRIMESTRE.
-    // Les données trimestrielles ne sont pas encore récupérées ici.
-    // ------------------------------------------------------------
+    // Criterion 2 currently uses latest annual record as placeholder.
+    // Definitive criterion should use latest quarter; quarterly data not yet retrieved.
     if (id === 2) {
       const last = sortedData[sortedData.length - 1];
 
@@ -211,9 +201,6 @@ export default function InvestmentCriteria({
       };
     }
 
-    // ------------------------------------------------------------
-    // 3. Croissance du Free Cash Flow
-    // ------------------------------------------------------------
     if (id === 3) {
       const first = sortedData[0];
       const last = sortedData[sortedData.length - 1];
@@ -230,9 +217,6 @@ export default function InvestmentCriteria({
       };
     }
 
-    // ------------------------------------------------------------
-    // 4. Nombre d'actions en circulation
-    // ------------------------------------------------------------
     if (id === 4) {
       const first = sortedData[0];
       const last = sortedData[sortedData.length - 1];
@@ -249,9 +233,6 @@ export default function InvestmentCriteria({
       };
     }
 
-    // ------------------------------------------------------------
-    // 5. Super ROIC
-    // ------------------------------------------------------------
     if (id === 5) {
       const roicValues = sortedData
         .map((item) => {
@@ -296,9 +277,6 @@ export default function InvestmentCriteria({
       };
     }
 
-    // ------------------------------------------------------------
-    // 6. Marge du Free Cash Flow
-    // ------------------------------------------------------------
     if (id === 6) {
       const margins = sortedData
         .map((item) => {
