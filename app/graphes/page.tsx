@@ -1,12 +1,11 @@
 "use client";
 
 import localFont from "next/font/local";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-const gothicFont = localFont({
+const unifraktur = localFont({
   src: "../fonts/UnifrakturMaguntia-Book.ttf",
-  variable: "--font-graphique",
   display: "swap",
 });
 
@@ -42,13 +41,8 @@ const COMPANY_LABELS: Record<Company, string> = {
   Hermès: "Hermès",
 };
 
-function formatNumber(
-  value: number | null,
-  decimals = 0
-): string {
-  if (value === null || !Number.isFinite(value)) {
-    return "—";
-  }
+function formatNumber(value: number | null, decimals = 1) {
+  if (value === null || !Number.isFinite(value)) return "—";
 
   return new Intl.NumberFormat("fr-FR", {
     minimumFractionDigits: decimals,
@@ -56,111 +50,27 @@ function formatNumber(
   }).format(value);
 }
 
-function formatMillions(
-  value: number | null,
-  decimals = 0
-): string {
-  if (value === null || !Number.isFinite(value)) {
-    return "—";
-  }
+function formatMillions(value: number | null, decimals = 1) {
+  if (value === null || !Number.isFinite(value)) return "—";
 
-  return `${formatNumber(value / 1_000_000, decimals)} M€`;
+  return `${formatNumber(value, decimals)} M€`;
 }
 
-function formatPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) {
-    return "—";
-  }
+function formatPercent(value: number | null, decimals = 1) {
+  if (value === null || !Number.isFinite(value)) return "—";
 
-  return `${formatNumber(value, 1)} %`;
+  return `${formatNumber(value, decimals)} %`;
 }
 
-function formatPerShare(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) {
-    return "—";
-  }
+function calculateSuperRoic(item: HistoricalFundamental) {
+  const {
+    freeCashFlow,
+    stockBasedCompensation,
+    totalAssets,
+    goodwill,
+    currentLiabilities,
+  } = item;
 
-  return `${formatNumber(value, 2)} €`;
-}
-
-function calculateGrowth(
-  current: number | null,
-  previous: number | null
-): number | null {
-  if (
-    current === null ||
-    previous === null ||
-    previous === 0 ||
-    !Number.isFinite(current) ||
-    !Number.isFinite(previous)
-  ) {
-    return null;
-  }
-
-  return ((current - previous) / Math.abs(previous)) * 100;
-}
-
-function calculateMargin(
-  numerator: number | null,
-  denominator: number | null
-): number | null {
-  if (
-    numerator === null ||
-    denominator === null ||
-    denominator === 0 ||
-    !Number.isFinite(numerator) ||
-    !Number.isFinite(denominator)
-  ) {
-    return null;
-  }
-
-  return (numerator / denominator) * 100;
-}
-
-function calculateFcfPerShare(
-  freeCashFlow: number | null,
-  shares: number | null
-): number | null {
-  if (
-    freeCashFlow === null ||
-    shares === null ||
-    shares === 0 ||
-    !Number.isFinite(freeCashFlow) ||
-    !Number.isFinite(shares)
-  ) {
-    return null;
-  }
-
-  const sharesInUnits =
-    shares > 1_000_000
-      ? shares
-      : shares * 1_000_000;
-
-  if (sharesInUnits === 0) {
-    return null;
-  }
-
-  return freeCashFlow / sharesInUnits;
-}
-
-/**
- * Super ROIC
- *
- * Formule exacte :
- *
- * (FCF - SBC)
- * -------------------------------
- * Total Assets - Goodwill - Current Liabilities
- *
- * Le résultat est exprimé en pourcentage.
- */
-function calculateSuperRoic(
-  freeCashFlow: number | null,
-  stockBasedCompensation: number | null,
-  totalAssets: number | null,
-  goodwill: number | null,
-  currentLiabilities: number | null
-): number | null {
   if (
     freeCashFlow === null ||
     stockBasedCompensation === null ||
@@ -171,119 +81,77 @@ function calculateSuperRoic(
     return null;
   }
 
-  if (
-    !Number.isFinite(freeCashFlow) ||
-    !Number.isFinite(stockBasedCompensation) ||
-    !Number.isFinite(totalAssets) ||
-    !Number.isFinite(goodwill) ||
-    !Number.isFinite(currentLiabilities)
-  ) {
-    return null;
-  }
-
   const investedCapital =
-    totalAssets -
-    goodwill -
-    currentLiabilities;
+    totalAssets - goodwill - currentLiabilities;
 
-  if (
-    !Number.isFinite(investedCapital) ||
-    investedCapital === 0
-  ) {
+  if (!Number.isFinite(investedCapital) || investedCapital === 0) {
     return null;
   }
 
   return (
-    ((freeCashFlow -
-      stockBasedCompensation) /
+    ((freeCashFlow - stockBasedCompensation) /
       investedCapital) *
     100
   );
 }
 
-function sortHistory(
-  rows: HistoricalFundamental[]
-): HistoricalFundamental[] {
-  return [...rows]
-    .filter((row) => Number.isFinite(row.year))
-    .sort((a, b) => a.year - b.year);
+function niceMax(values: number[]) {
+  if (values.length === 0) return 100;
+
+  const max = Math.max(...values);
+
+  if (!Number.isFinite(max) || max <= 0) return 100;
+
+  const magnitude = 10 ** Math.floor(Math.log10(max));
+  const normalized = max / magnitude;
+
+  let step = 1;
+
+  if (normalized <= 1) step = 1;
+  else if (normalized <= 2) step = 2;
+  else if (normalized <= 5) step = 5;
+  else step = 10;
+
+  return Math.ceil(normalized / step) * step * magnitude;
 }
 
-/* -------------------------------------------------------------------------- */
-/* AXES */
-/* -------------------------------------------------------------------------- */
+function niceMin(values: number[]) {
+  if (values.length === 0) return 0;
 
-function niceMax(
-  values: Array<number | null>
-): number {
-  const finite = values.filter(
-    (value): value is number =>
-      value !== null && Number.isFinite(value)
-  );
+  const min = Math.min(...values);
 
-  if (finite.length === 0) {
-    return 1;
-  }
+  if (!Number.isFinite(min)) return 0;
 
-  const max = Math.max(...finite);
+  if (min >= 0) return 0;
 
-  if (max <= 0) {
-    return 1;
-  }
+  const magnitude =
+    10 ** Math.floor(Math.log10(Math.abs(min)));
 
-  return max * 1.12;
+  const normalized = Math.abs(min) / magnitude;
+
+  let step = 1;
+
+  if (normalized <= 1) step = 1;
+  else if (normalized <= 2) step = 2;
+  else if (normalized <= 5) step = 5;
+  else step = 10;
+
+  return -Math.ceil(normalized / step) * step * magnitude;
 }
 
-function niceMin(
-  values: Array<number | null>
-): number {
-  const finite = values.filter(
-    (value): value is number =>
-      value !== null && Number.isFinite(value)
-  );
-
-  if (finite.length === 0) {
-    return 0;
-  }
-
-  const min = Math.min(...finite);
-
-  if (min >= 0) {
-    return 0;
-  }
-
-  return min * 1.12;
-}
-
-function getXAxisYears(
-  data: Array<{ year: number }>
-): number[] {
+function getXAxisYears(data: HistoricalFundamental[]) {
   if (data.length <= 14) {
     return data.map((item) => item.year);
   }
 
-  const targetLabels = 14;
-
-  const step = Math.max(
-    1,
-    Math.ceil(
-      (data.length - 1) /
-        (targetLabels - 1)
-    )
-  );
-
+  const step = Math.ceil(data.length / 14);
   const years: number[] = [];
 
-  for (
-    let index = 0;
-    index < data.length;
-    index += step
-  ) {
-    years.push(data[index].year);
+  for (let i = 0; i < data.length; i += step) {
+    years.push(data[i].year);
   }
 
-  const lastYear =
-    data[data.length - 1]?.year;
+  const lastYear = data[data.length - 1]?.year;
 
   if (
     lastYear !== undefined &&
@@ -295,111 +163,65 @@ function getXAxisYears(
   return years;
 }
 
-/* -------------------------------------------------------------------------- */
-/* TOOLTIP */
-/* -------------------------------------------------------------------------- */
-
 function ChartTooltip({
   x,
   y,
-  year,
+  title,
   value,
-  formatter,
 }: {
   x: number;
   y: number;
-  year: number;
-  value: number;
-  formatter: (value: number | null) => string;
+  title: string;
+  value: string;
 }) {
-  const tooltipWidth = 280;
-  const tooltipHeight = 120;
-
-  let left = x - tooltipWidth / 2;
-  let top = y - tooltipHeight - 22;
-
-  const maxLeft = 760 - tooltipWidth - 4;
-
-  if (left < 4) {
-    left = 4;
-  }
-
-  if (left > maxLeft) {
-    left = maxLeft;
-  }
-
-  if (top < 4) {
-    top = y + 22;
-  }
-
   return (
-    <g
-      pointerEvents="none"
-      style={{
-        filter:
-          "drop-shadow(0px 8px 18px rgba(65, 52, 40, 0.20))",
-      }}
-    >
+    <g pointerEvents="none">
       <rect
-        x={left}
-        y={top}
-        width={tooltipWidth}
-        height={tooltipHeight}
-        rx="15"
-        fill="#fffdf8"
-        stroke="#d4c9bb"
-        strokeWidth="1.6"
+        x={x - 70}
+        y={y - 58}
+        width="140"
+        height="46"
+        rx="10"
+        fill="#40372f"
+        opacity="0.96"
       />
 
       <text
-        x={left + tooltipWidth / 2}
-        y={top + 42}
+        x={x}
+        y={y - 38}
         textAnchor="middle"
-        fontSize="21"
+        fontSize="11"
         fontWeight="700"
-        fontFamily="Georgia, serif"
-        fill="#75695e"
+        fill="#fdfbf5"
       >
-        {year}
+        {title}
       </text>
 
       <text
-        x={left + tooltipWidth / 2}
-        y={top + 88}
+        x={x}
+        y={y - 20}
         textAnchor="middle"
-        fontSize="32"
+        fontSize="12"
         fontWeight="700"
-        fill="#40372f"
+        fill="#fdfbf5"
       >
-        {formatter(value)}
+        {value}
       </text>
     </g>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* COURBE */
-/* -------------------------------------------------------------------------- */
-
 function PremiumLineChart({
   data,
-  valueKey,
-  percent = false,
-  formatter,
+  getValue,
+  formatValue,
+  zeroLine = false,
 }: {
-  data: Array<{
-    year: number;
-    value: number | null;
-  }>;
-  valueKey: string;
-  percent?: boolean;
-  formatter: (
-    value: number | null
-  ) => string;
+  data: HistoricalFundamental[];
+  getValue: (item: HistoricalFundamental) => number | null;
+  formatValue: (value: number) => string;
+  zeroLine?: boolean;
 }) {
-  const [hoveredIndex, setHoveredIndex] =
-    useState<number | null>(null);
-
   const width = 760;
   const height = 300;
 
@@ -408,274 +230,233 @@ function PremiumLineChart({
   const paddingTop = 20;
   const paddingBottom = 42;
 
-  const innerWidth =
-    width -
-    paddingLeft -
-    paddingRight;
+  const chartWidth =
+    width - paddingLeft - paddingRight;
 
-  const innerHeight =
-    height -
-    paddingTop -
-    paddingBottom;
+  const chartHeight =
+    height - paddingTop - paddingBottom;
 
-  const values = data.map(
-    (item) => item.value
-  );
+  const values = data
+    .map(getValue)
+    .filter(
+      (value): value is number =>
+        value !== null && Number.isFinite(value)
+    );
 
-  const minValue = niceMin(values);
-  const maxValue = niceMax(values);
+  if (values.length === 0) {
+    return (
+      <div className="flex h-[300px] items-center justify-center font-serif text-sm text-[#8f8174]">
+        Données indisponibles
+      </div>
+    );
+  }
 
-  const range =
-    maxValue - minValue === 0
-      ? 1
-      : maxValue - minValue;
+  let minValue = niceMin(values);
+  let maxValue = niceMax(values);
+
+  if (zeroLine) {
+    minValue = Math.min(minValue, 0);
+    maxValue = Math.max(maxValue, 0);
+  }
+
+  if (minValue === maxValue) {
+    maxValue += 1;
+    minValue -= 1;
+  }
+
+  const range = maxValue - minValue;
 
   const points = data
     .map((item, index) => {
-      if (
-        item.value === null ||
-        !Number.isFinite(item.value)
-      ) {
+      const value = getValue(item);
+
+      if (value === null || !Number.isFinite(value)) {
         return null;
       }
 
       const x =
-        data.length <= 1
-          ? paddingLeft +
-            innerWidth / 2
-          : paddingLeft +
-            (index /
-              (data.length - 1)) *
-              innerWidth;
+        paddingLeft +
+        (index / Math.max(data.length - 1, 1)) *
+          chartWidth;
 
       const y =
         paddingTop +
-        ((maxValue - item.value) /
-          range) *
-          innerHeight;
+        ((maxValue - value) / range) *
+          chartHeight;
 
       return {
+        year: item.year,
+        value,
         x,
         y,
-        year: item.year,
-        value: item.value,
-        index,
       };
     })
     .filter(
       (
         point
       ): point is {
-        x: number;
-        y: number;
         year: number;
         value: number;
-        index: number;
+        x: number;
+        y: number;
       } => point !== null
     );
-
-  if (points.length === 0) {
-    return (
-      <div className="flex h-[300px] items-center justify-center text-sm text-stone-400">
-        Données indisponibles
-      </div>
-    );
-  }
 
   const linePath = points
     .map(
       (point, index) =>
-        `${
-          index === 0 ? "M" : "L"
-        } ${point.x.toFixed(
-          2
-        )} ${point.y.toFixed(2)}`
+        `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`
     )
     .join(" ");
 
-  const baselineY =
-    paddingTop + innerHeight;
-
-  const firstPoint = points[0];
-  const lastPoint =
-    points[points.length - 1];
-
   const areaPath =
-    `${linePath} ` +
-    `L ${lastPoint.x.toFixed(
-      2
-    )} ${baselineY.toFixed(2)} ` +
-    `L ${firstPoint.x.toFixed(
-      2
-    )} ${baselineY.toFixed(2)} Z`;
+    points.length > 0
+      ? `${linePath} L ${points[points.length - 1].x} ${
+          height - paddingBottom
+        } L ${points[0].x} ${
+          height - paddingBottom
+        } Z`
+      : "";
 
-  const gradientId = `premium-gradient-${valueKey}`;
+  const xAxisYears = getXAxisYears(data);
 
-  const gridValues = Array.from(
-    { length: 9 },
-    (_, index) => index / 8
-  );
+  const [hoveredIndex, setHoveredIndex] =
+    useState<number | null>(null);
 
-  const hoveredPoint =
-    hoveredIndex === null
-      ? null
-      : points.find(
-          (point) =>
-            point.index ===
-            hoveredIndex
-        ) ?? null;
+  const hovered =
+    hoveredIndex !== null
+      ? points[hoveredIndex]
+      : null;
 
-  const xAxisYears =
-    getXAxisYears(data);
+  const yTicks = 5;
 
   return (
-    <div className="w-full">
+    <div className="relative">
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="h-auto w-full overflow-visible"
-        role="img"
-        aria-label={`Graphique ${valueKey}`}
-        onMouseLeave={() =>
-          setHoveredIndex(null)
-        }
       >
         <defs>
           <linearGradient
-            id={gradientId}
+            id="purpleAreaGradient"
             x1="0"
-            y1="0"
             x2="0"
+            y1="0"
             y2="1"
           >
             <stop
               offset="0%"
-              stopColor="#5b2a72"
-              stopOpacity="0.30"
+              stopColor="#4c376b"
+              stopOpacity="0.20"
             />
-
-            <stop
-              offset="65%"
-              stopColor="#7d4b92"
-              stopOpacity="0.12"
-            />
-
             <stop
               offset="100%"
-              stopColor="#c9b2d4"
-              stopOpacity="0.02"
+              stopColor="#4c376b"
+              stopOpacity="0"
             />
           </linearGradient>
         </defs>
 
-        {gridValues.map((fraction) => {
-          const y =
-            paddingTop +
-            fraction * innerHeight;
+        {Array.from({ length: yTicks + 1 }).map(
+          (_, index) => {
+            const ratio = index / yTicks;
+            const y =
+              paddingTop + ratio * chartHeight;
 
-          const value =
-            maxValue -
-            fraction * range;
+            const value =
+              maxValue - ratio * range;
 
-          return (
-            <g key={fraction}>
-              <line
-                x1={paddingLeft}
-                x2={
-                  width -
-                  paddingRight
-                }
-                y1={y}
-                y2={y}
-                stroke="#d8d0c4"
-                strokeWidth="1"
-                strokeDasharray="2 5"
-              />
+            return (
+              <g key={index}>
+                <line
+                  x1={paddingLeft}
+                  x2={width - paddingRight}
+                  y1={y}
+                  y2={y}
+                  stroke="#e6ded3"
+                  strokeWidth="1"
+                />
 
-              <text
-                x={paddingLeft - 10}
-                y={y + 7}
-                textAnchor="end"
-                fontSize="20"
-                fontWeight="700"
-                fill="#75695e"
-              >
-                {percent
-                  ? formatPercent(value)
-                  : formatter(value)}
-              </text>
-            </g>
-          );
-        })}
+                <text
+                  x={paddingLeft - 12}
+                  y={y + 4}
+                  textAnchor="end"
+                  fontSize="12"
+                  fontWeight="600"
+                  fill="#8b7d70"
+                >
+                  {formatValue(value)}
+                </text>
+              </g>
+            );
+          }
+        )}
 
-        <path
-          d={areaPath}
-          fill={`url(#${gradientId})`}
-        />
+        {zeroLine &&
+          minValue < 0 &&
+          maxValue > 0 && (
+            <line
+              x1={paddingLeft}
+              x2={width - paddingRight}
+              y1={
+                paddingTop +
+                (maxValue / range) * chartHeight
+              }
+              y2={
+                paddingTop +
+                (maxValue / range) * chartHeight
+              }
+              stroke="#9d9185"
+              strokeWidth="1.5"
+              strokeDasharray="5 5"
+            />
+          )}
+
+        {areaPath && (
+          <path
+            d={areaPath}
+            fill="url(#purpleAreaGradient)"
+          />
+        )}
 
         <path
           d={linePath}
           fill="none"
-          stroke="#5b2a72"
-          strokeWidth="2.8"
+          stroke="#4c376b"
+          strokeWidth="3"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
 
-        {points.map((point) => (
-          <g
-            key={`${point.year}-${point.index}`}
+        {points.map((point, index) => (
+          <circle
+            key={`${point.year}-${index}`}
+            cx={point.x}
+            cy={point.y}
+            r={hoveredIndex === index ? 6 : 3}
+            fill="#4c376b"
+            stroke="#fdfbf5"
+            strokeWidth="2"
             onMouseEnter={() =>
-              setHoveredIndex(
-                point.index
-              )
+              setHoveredIndex(index)
             }
-          >
-            <circle
-              cx={point.x}
-              cy={point.y}
-              r="11"
-              fill="transparent"
-            />
-
-            <circle
-              cx={point.x}
-              cy={point.y}
-              r={
-                hoveredIndex ===
-                point.index
-                  ? 4.5
-                  : 3.2
-              }
-              fill="#fdfbf5"
-              stroke="#5b2a72"
-              strokeWidth={
-                hoveredIndex ===
-                point.index
-                  ? 2.2
-                  : 1.8
-              }
-            />
-          </g>
+            onMouseLeave={() =>
+              setHoveredIndex(null)
+            }
+          />
         ))}
 
         {xAxisYears.map((year) => {
           const index = data.findIndex(
-            (item) =>
-              item.year === year
+            (item) => item.year === year
           );
 
-          if (index < 0) {
-            return null;
-          }
+          if (index === -1) return null;
 
           const x =
-            data.length <= 1
-              ? paddingLeft +
-                innerWidth / 2
-              : paddingLeft +
-                (index /
-                  (data.length - 1)) *
-                  innerWidth;
+            paddingLeft +
+            (index / Math.max(data.length - 1, 1)) *
+              chartWidth;
 
           return (
             <text
@@ -692,13 +473,12 @@ function PremiumLineChart({
           );
         })}
 
-        {hoveredPoint && (
+        {hovered && (
           <ChartTooltip
-            x={hoveredPoint.x}
-            y={hoveredPoint.y}
-            year={hoveredPoint.year}
-            value={hoveredPoint.value}
-            formatter={formatter}
+            x={hovered.x}
+            y={hovered.y}
+            title={`${hovered.year}`}
+            value={formatValue(hovered.value)}
           />
         )}
       </svg>
@@ -706,27 +486,15 @@ function PremiumLineChart({
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* BARRES */
-/* -------------------------------------------------------------------------- */
-
 function PremiumBarChart({
   data,
-  formatter,
-  valueKey,
+  getValue,
+  formatValue,
 }: {
-  data: Array<{
-    year: number;
-    value: number | null;
-  }>;
-  formatter: (
-    value: number | null
-  ) => string;
-  valueKey: string;
+  data: HistoricalFundamental[];
+  getValue: (item: HistoricalFundamental) => number | null;
+  formatValue: (value: number) => string;
 }) {
-  const [hoveredIndex, setHoveredIndex] =
-    useState<number | null>(null);
-
   const width = 760;
   const height = 300;
 
@@ -735,185 +503,157 @@ function PremiumBarChart({
   const paddingTop = 20;
   const paddingBottom = 42;
 
-  const innerWidth =
-    width -
-    paddingLeft -
-    paddingRight;
+  const chartWidth =
+    width - paddingLeft - paddingRight;
 
-  const innerHeight =
-    height -
-    paddingTop -
-    paddingBottom;
+  const chartHeight =
+    height - paddingTop - paddingBottom;
 
-  const values = data.map(
-    (item) => item.value
-  );
+  const values = data
+    .map(getValue)
+    .filter(
+      (value): value is number =>
+        value !== null && Number.isFinite(value)
+    );
 
-  const maxValue = niceMax(values);
-  const minValue = niceMin(values);
+  if (values.length === 0) {
+    return (
+      <div className="flex h-[300px] items-center justify-center font-serif text-sm text-[#8f8174]">
+        Données indisponibles
+      </div>
+    );
+  }
 
-  const range =
-    maxValue - minValue === 0
-      ? 1
-      : maxValue - minValue;
+  const minValue = Math.min(0, niceMin(values));
+  const maxValue = Math.max(0, niceMax(values));
+  const range = maxValue - minValue || 1;
 
   const zeroY =
     paddingTop +
-    ((maxValue - 0) / range) *
-      innerHeight;
+    ((maxValue - 0) / range) * chartHeight;
 
-  const slotWidth =
-    data.length > 0
-      ? innerWidth / data.length
-      : innerWidth;
+  const barWidth =
+    (chartWidth / Math.max(data.length, 1)) *
+    0.58;
 
-  const barWidth = Math.min(
-    52,
-    slotWidth * 0.56
-  );
+  const xAxisYears = getXAxisYears(data);
 
-  const xAxisYears =
-    getXAxisYears(data);
+  const [hoveredIndex, setHoveredIndex] =
+    useState<number | null>(null);
 
   return (
-    <div className="w-full">
+    <div className="relative">
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="h-auto w-full overflow-visible"
-        role="img"
-        aria-label={`Graphique ${valueKey}`}
-        onMouseLeave={() =>
-          setHoveredIndex(null)
-        }
       >
-        {Array.from(
-          { length: 9 },
-          (_, index) => index / 8
-        ).map((fraction) => {
-          const y =
-            paddingTop +
-            fraction * innerHeight;
+        {Array.from({ length: 5 }).map(
+          (_, index) => {
+            const ratio = index / 4;
 
-          const value =
-            maxValue -
-            fraction * range;
+            const y =
+              paddingTop + ratio * chartHeight;
 
-          return (
-            <g key={fraction}>
-              <line
-                x1={paddingLeft}
-                x2={
-                  width -
-                  paddingRight
-                }
-                y1={y}
-                y2={y}
-                stroke="#d8d0c4"
-                strokeWidth="1"
-                strokeDasharray="2 5"
-              />
+            const value =
+              maxValue - ratio * range;
 
-              <text
-                x={paddingLeft - 10}
-                y={y + 7}
-                textAnchor="end"
-                fontSize="20"
-                fontWeight="700"
-                fill="#75695e"
-              >
-                {formatter(value)}
-              </text>
-            </g>
-          );
-        })}
+            return (
+              <g key={index}>
+                <line
+                  x1={paddingLeft}
+                  x2={width - paddingRight}
+                  y1={y}
+                  y2={y}
+                  stroke="#e6ded3"
+                  strokeWidth="1"
+                />
+
+                <text
+                  x={paddingLeft - 12}
+                  y={y + 4}
+                  textAnchor="end"
+                  fontSize="12"
+                  fontWeight="600"
+                  fill="#8b7d70"
+                >
+                  {formatValue(value)}
+                </text>
+              </g>
+            );
+          }
+        )}
 
         {data.map((item, index) => {
+          const value = getValue(item);
+
           if (
-            item.value === null ||
-            !Number.isFinite(item.value)
+            value === null ||
+            !Number.isFinite(value)
           ) {
             return null;
           }
 
-          const xCenter =
+          const x =
             paddingLeft +
-            slotWidth * index +
-            slotWidth / 2;
+            (index + 0.5) *
+              (chartWidth / data.length) -
+            barWidth / 2;
 
           const valueY =
             paddingTop +
-            ((maxValue - item.value) /
-              range) *
-              innerHeight;
+            ((maxValue - value) / range) *
+              chartHeight;
 
-          const y =
-            item.value >= 0
-              ? valueY
-              : zeroY;
-
-          const h = Math.abs(
-            zeroY - valueY
-          );
-
-          const isHovered =
-            hoveredIndex === index;
+          const y = Math.min(valueY, zeroY);
+          const h = Math.abs(zeroY - valueY);
 
           return (
-            <g
-              key={item.year}
+            <rect
+              key={`${item.year}-${index}`}
+              x={x}
+              y={y}
+              width={barWidth}
+              height={Math.max(h, 1)}
+              rx="3"
+              fill="#4c376b"
+              opacity={
+                hoveredIndex === index ? 1 : 0.82
+              }
               onMouseEnter={() =>
                 setHoveredIndex(index)
               }
-            >
-              <rect
-                x={
-                  xCenter -
-                  barWidth / 2
-                }
-                y={y}
-                width={barWidth}
-                height={Math.max(h, 1)}
-                rx="3"
-                fill="#5b2a72"
-                opacity={
-                  isHovered
-                    ? "1"
-                    : "0.82"
-                }
-              />
-
-              {isHovered && (
-                <ChartTooltip
-                  x={xCenter}
-                  y={y}
-                  year={item.year}
-                  value={item.value}
-                  formatter={formatter}
-                />
-              )}
-            </g>
+              onMouseLeave={() =>
+                setHoveredIndex(null)
+              }
+            />
           );
         })}
 
+        <line
+          x1={paddingLeft}
+          x2={width - paddingRight}
+          y1={zeroY}
+          y2={zeroY}
+          stroke="#9d9185"
+          strokeWidth="1.5"
+        />
+
         {xAxisYears.map((year) => {
           const index = data.findIndex(
-            (item) =>
-              item.year === year
+            (item) => item.year === year
           );
 
-          if (index < 0) {
-            return null;
-          }
+          if (index === -1) return null;
 
-          const xCenter =
+          const x =
             paddingLeft +
-            slotWidth * index +
-            slotWidth / 2;
+            (index + 0.5) *
+              (chartWidth / data.length);
 
           return (
             <text
               key={year}
-              x={xCenter}
+              x={x}
               y={height - 8}
               textAnchor="middle"
               fontSize="21"
@@ -924,27 +664,49 @@ function PremiumBarChart({
             </text>
           );
         })}
+
+        {hoveredIndex !== null &&
+          data[hoveredIndex] &&
+          (() => {
+            const item = data[hoveredIndex];
+            const value = getValue(item);
+
+            if (
+              value === null ||
+              !Number.isFinite(value)
+            ) {
+              return null;
+            }
+
+            const x =
+              paddingLeft +
+              (hoveredIndex + 0.5) *
+                (chartWidth / data.length);
+
+            const valueY =
+              paddingTop +
+              ((maxValue - value) / range) *
+                chartHeight;
+
+            return (
+              <ChartTooltip
+                x={x}
+                y={valueY}
+                title={`${item.year}`}
+                value={formatValue(value)}
+              />
+            );
+          })()}
       </svg>
     </div>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* CASH / DETTES */
-/* -------------------------------------------------------------------------- */
-
 function PremiumCashDebtChart({
   data,
 }: {
-  data: Array<{
-    year: number;
-    cash: number | null;
-    debt: number | null;
-  }>;
+  data: HistoricalFundamental[];
 }) {
-  const [hoveredIndex, setHoveredIndex] =
-    useState<number | null>(null);
-
   const width = 760;
   const height = 300;
 
@@ -953,206 +715,208 @@ function PremiumCashDebtChart({
   const paddingTop = 20;
   const paddingBottom = 42;
 
-  const innerWidth =
-    width -
-    paddingLeft -
-    paddingRight;
+  const chartWidth =
+    width - paddingLeft - paddingRight;
 
-  const innerHeight =
-    height -
-    paddingTop -
-    paddingBottom;
+  const chartHeight =
+    height - paddingTop - paddingBottom;
 
-  const allValues = [
-    ...data.map((item) => item.cash),
-    ...data.map((item) => item.debt),
-  ];
+  const cashValues = data
+    .map(
+      (item) =>
+        item.cashAndShortTermInvestments ??
+        item.cash
+    )
+    .filter(
+      (value): value is number =>
+        value !== null && Number.isFinite(value)
+    );
+
+  const debtValues = data
+    .map((item) => item.totalDebt)
+    .filter(
+      (value): value is number =>
+        value !== null && Number.isFinite(value)
+    );
+
+  const allValues = [...cashValues, ...debtValues];
+
+  if (allValues.length === 0) {
+    return (
+      <div className="flex h-[300px] items-center justify-center font-serif text-sm text-[#8f8174]">
+        Données indisponibles
+      </div>
+    );
+  }
 
   const maxValue = niceMax(allValues);
+  const minValue = 0;
+  const range = maxValue || 1;
 
-  const slotWidth =
-    data.length > 0
-      ? innerWidth / data.length
-      : innerWidth;
+  const barGroupWidth =
+    chartWidth / Math.max(data.length, 1);
 
-  const groupWidth = Math.min(
-    68,
-    slotWidth * 0.72
-  );
+  const barWidth = barGroupWidth * 0.28;
 
-  const barWidth = Math.max(
-    8,
-    (groupWidth - 7) / 2
-  );
+  const xAxisYears = getXAxisYears(data);
 
-  const xAxisYears =
-    getXAxisYears(data);
+  const [hovered, setHovered] = useState<{
+    index: number;
+    type: "cash" | "debt";
+  } | null>(null);
 
   return (
-    <div className="w-full">
+    <div>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="h-auto w-full overflow-visible"
-        role="img"
-        aria-label="Graphique cash et dettes"
-        onMouseLeave={() =>
-          setHoveredIndex(null)
-        }
       >
-        {Array.from(
-          { length: 9 },
-          (_, index) => index / 8
-        ).map((fraction) => {
-          const y =
-            paddingTop +
-            fraction * innerHeight;
+        {Array.from({ length: 5 }).map(
+          (_, index) => {
+            const ratio = index / 4;
 
-          const value =
-            maxValue *
-            (1 - fraction);
+            const y =
+              paddingTop + ratio * chartHeight;
 
-          return (
-            <g key={fraction}>
-              <line
-                x1={paddingLeft}
-                x2={
-                  width -
-                  paddingRight
-                }
-                y1={y}
-                y2={y}
-                stroke="#d8d0c4"
-                strokeWidth="1"
-                strokeDasharray="2 5"
-              />
+            const value =
+              maxValue - ratio * range;
 
-              <text
-                x={paddingLeft - 10}
-                y={y + 7}
-                textAnchor="end"
-                fontSize="20"
-                fontWeight="700"
-                fill="#75695e"
-              >
-                {formatMillions(value)}
-              </text>
-            </g>
-          );
-        })}
+            return (
+              <g key={index}>
+                <line
+                  x1={paddingLeft}
+                  x2={width - paddingRight}
+                  y1={y}
+                  y2={y}
+                  stroke="#e6ded3"
+                  strokeWidth="1"
+                />
+
+                <text
+                  x={paddingLeft - 12}
+                  y={y + 4}
+                  textAnchor="end"
+                  fontSize="12"
+                  fontWeight="600"
+                  fill="#8b7d70"
+                >
+                  {formatMillions(value)}
+                </text>
+              </g>
+            );
+          }
+        )}
 
         {data.map((item, index) => {
-          const xCenter =
+          const cash =
+            item.cashAndShortTermInvestments ??
+            item.cash;
+
+          const debt = item.totalDebt;
+
+          const center =
             paddingLeft +
-            slotWidth * index +
-            slotWidth / 2;
+            (index + 0.5) * barGroupWidth;
+
+          const cashX =
+            center - barWidth - 3;
+
+          const debtX = center + 3;
 
           const cashHeight =
-            item.cash === null
-              ? 0
-              : (item.cash / maxValue) *
-                innerHeight;
+            cash !== null && Number.isFinite(cash)
+              ? (cash / range) * chartHeight
+              : 0;
 
           const debtHeight =
-            item.debt === null
-              ? 0
-              : (item.debt / maxValue) *
-                innerHeight;
+            debt !== null && Number.isFinite(debt)
+              ? (debt / range) * chartHeight
+              : 0;
 
-          const isHovered =
-            hoveredIndex === index;
+          const cashY =
+            paddingTop +
+            chartHeight -
+            cashHeight;
+
+          const debtY =
+            paddingTop +
+            chartHeight -
+            debtHeight;
 
           return (
-            <g
-              key={item.year}
-              onMouseEnter={() =>
-                setHoveredIndex(index)
-              }
-            >
-              <rect
-                x={
-                  xCenter -
-                  groupWidth / 2
-                }
-                y={
-                  paddingTop +
-                  innerHeight -
-                  cashHeight
-                }
-                width={barWidth}
-                height={cashHeight}
-                rx="3"
-                fill="#5b2a72"
-                opacity={
-                  isHovered
-                    ? "1"
-                    : "0.82"
-                }
-              />
+            <g key={`${item.year}-${index}`}>
+              {cash !== null &&
+                Number.isFinite(cash) && (
+                  <rect
+                    x={cashX}
+                    y={cashY}
+                    width={barWidth}
+                    height={Math.max(cashHeight, 1)}
+                    rx="3"
+                    fill="#4c376b"
+                    opacity={
+                      hovered?.index === index &&
+                      hovered.type === "cash"
+                        ? 1
+                        : 0.82
+                    }
+                    onMouseEnter={() =>
+                      setHovered({
+                        index,
+                        type: "cash",
+                      })
+                    }
+                    onMouseLeave={() =>
+                      setHovered(null)
+                    }
+                  />
+                )}
 
-              <rect
-                x={xCenter + 3}
-                y={
-                  paddingTop +
-                  innerHeight -
-                  debtHeight
-                }
-                width={barWidth}
-                height={debtHeight}
-                rx="3"
-                fill="#b08a2e"
-                opacity={
-                  isHovered
-                    ? "1"
-                    : "0.86"
-                }
-              />
-
-              {isHovered && (
-                <ChartTooltip
-                  x={xCenter}
-                  y={
-                    paddingTop +
-                    innerHeight -
-                    Math.max(
-                      cashHeight,
-                      debtHeight
-                    )
-                  }
-                  year={item.year}
-                  value={
-                    Math.max(
-                      item.cash ?? 0,
-                      item.debt ?? 0
-                    ) * 1_000_000
-                  }
-                  formatter={
-                    formatMillions
-                  }
-                />
-              )}
+              {debt !== null &&
+                Number.isFinite(debt) && (
+                  <rect
+                    x={debtX}
+                    y={debtY}
+                    width={barWidth}
+                    height={Math.max(debtHeight, 1)}
+                    rx="3"
+                    fill="#c5a43a"
+                    opacity={
+                      hovered?.index === index &&
+                      hovered.type === "debt"
+                        ? 1
+                        : 0.82
+                    }
+                    onMouseEnter={() =>
+                      setHovered({
+                        index,
+                        type: "debt",
+                      })
+                    }
+                    onMouseLeave={() =>
+                      setHovered(null)
+                    }
+                  />
+                )}
             </g>
           );
         })}
 
         {xAxisYears.map((year) => {
           const index = data.findIndex(
-            (item) =>
-              item.year === year
+            (item) => item.year === year
           );
 
-          if (index < 0) {
-            return null;
-          }
+          if (index === -1) return null;
 
-          const xCenter =
+          const x =
             paddingLeft +
-            slotWidth * index +
-            slotWidth / 2;
+            (index + 0.5) * barGroupWidth;
 
           return (
             <text
               key={year}
-              x={xCenter}
+              x={x}
               y={height - 8}
               textAnchor="middle"
               fontSize="21"
@@ -1163,16 +927,65 @@ function PremiumCashDebtChart({
             </text>
           );
         })}
+
+        {hovered &&
+          (() => {
+            const item = data[hovered.index];
+
+            if (!item) return null;
+
+            const value =
+              hovered.type === "cash"
+                ? item.cashAndShortTermInvestments ??
+                  item.cash
+                : item.totalDebt;
+
+            if (
+              value === null ||
+              value === undefined ||
+              !Number.isFinite(value)
+            ) {
+              return null;
+            }
+
+            const center =
+              paddingLeft +
+              (hovered.index + 0.5) *
+                barGroupWidth;
+
+            const barX =
+              hovered.type === "cash"
+                ? center - barWidth / 2
+                : center + barWidth / 2;
+
+            const valueY =
+              paddingTop +
+              chartHeight -
+              (value / range) * chartHeight;
+
+            return (
+              <ChartTooltip
+                x={barX}
+                y={valueY}
+                title={`${item.year} ${
+                  hovered.type === "cash"
+                    ? "Cash"
+                    : "Dette"
+                }`}
+                value={formatMillions(value)}
+              />
+            );
+          })()}
       </svg>
 
-      <div className="mt-1 flex justify-center gap-6 text-[11px] text-stone-500">
-        <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm bg-[#5b2a72]" />
-          <span>Trésorerie</span>
+      <div className="mt-3 flex items-center justify-center gap-6 font-serif text-xs text-[#75695e]">
+        <div className="flex items-center gap-2">
+          <span className="h-3 w-3 rounded-sm bg-[#4c376b]" />
+          <span>Cash</span>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-sm bg-[#b08a2e]" />
+        <div className="flex items-center gap-2">
+          <span className="h-3 w-3 rounded-sm bg-[#c5a43a]" />
           <span>Dette</span>
         </div>
       </div>
@@ -1180,29 +993,32 @@ function PremiumCashDebtChart({
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* CARTES */
-/* -------------------------------------------------------------------------- */
-
 function GraphCard({
   title,
-  description,
+  subtitle,
   children,
 }: {
   title: string;
-  description: string;
+  subtitle?: string;
   children: React.ReactNode;
 }) {
   return (
     <section className="rounded-[22px] border border-[#ded6ca] bg-[#fdfbf5] p-5 shadow-[0_8px_30px_rgba(84,68,48,0.06)] sm:p-6">
       <div className="mb-4">
-        <h2 className="font-serif text-[17px] font-semibold tracking-[-0.01em] text-[#40372f]">
+        <h2
+          className="text-[28px] leading-none tracking-[-0.02em] text-[#40372f]"
+          style={{
+            fontFamily: "var(--font-graphique)",
+          }}
+        >
           {title}
         </h2>
 
-        <p className="mt-1 text-[11px] leading-5 text-[#9a8f83]">
-          {description}
-        </p>
+        {subtitle && (
+          <p className="mt-2 font-serif text-xs leading-5 text-[#8b7d70]">
+            {subtitle}
+          </p>
+        )}
       </div>
 
       {children}
@@ -1210,25 +1026,16 @@ function GraphCard({
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* PAGE */
-/* -------------------------------------------------------------------------- */
-
-export default function GraphiquesPage() {
+function GraphiquesContent() {
   const searchParams = useSearchParams();
 
-  const companyParam =
-    searchParams.get("company");
+  const companyParam = searchParams.get("company");
 
   const company: Company =
-    companyParam === "Hermès"
-      ? "Hermès"
-      : "LVMH";
+    companyParam === "Hermès" ? "Hermès" : "LVMH";
 
   const [data, setData] =
-    useState<HistoricalResponse | null>(
-      null
-    );
+    useState<HistoricalResponse | null>(null);
 
   const [loading, setLoading] =
     useState(true);
@@ -1239,7 +1046,7 @@ export default function GraphiquesPage() {
   useEffect(() => {
     let cancelled = false;
 
-    async function load() {
+    async function loadHistory() {
       try {
         setLoading(true);
         setError(null);
@@ -1253,7 +1060,7 @@ export default function GraphiquesPage() {
 
         if (!response.ok) {
           throw new Error(
-            `Erreur HTTP ${response.status}`
+            `Erreur ${response.status}`
           );
         }
 
@@ -1278,105 +1085,143 @@ export default function GraphiquesPage() {
       }
     }
 
-    load();
+    loadHistory();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const history = useMemo(() => {
-    return sortHistory(
-      data?.[company] ?? []
-    );
-  }, [data, company]);
+  const history = useMemo(
+    () => data?.[company] ?? [],
+    [data, company]
+  );
 
   const revenueGrowth = useMemo(() => {
-    return history.map((row) => ({
-      year: row.year,
-      value:
-        row.revenue === null
-          ? null
-          : row.revenue / 1_000_000,
-    }));
+    return history.map((item, index) => {
+      if (index === 0) {
+        return {
+          ...item,
+          value: null,
+        };
+      }
+
+      const previous = history[index - 1];
+
+      if (
+        item.revenue === null ||
+        previous.revenue === null ||
+        previous.revenue === 0
+      ) {
+        return {
+          ...item,
+          value: null,
+        };
+      }
+
+      return {
+        ...item,
+        value:
+          ((item.revenue - previous.revenue) /
+            previous.revenue) *
+          100,
+      };
+    });
   }, [history]);
 
-  const grossMargin = useMemo(() => {
-    return history.map((row) => ({
-      year: row.year,
-      value: calculateMargin(
-        row.grossProfit,
-        row.revenue
-      ),
-    }));
-  }, [history]);
-
-  const fcfMargin = useMemo(() => {
-    return history.map((row) => ({
-      year: row.year,
-      value: calculateMargin(
-        row.freeCashFlow,
-        row.revenue
-      ),
+  const fcfAnnual = useMemo(() => {
+    return history.map((item) => ({
+      ...item,
+      value: item.freeCashFlow,
     }));
   }, [history]);
 
   const fcfPerShare = useMemo(() => {
-    return history.map((row) => ({
-      year: row.year,
-      value: calculateFcfPerShare(
-        row.freeCashFlow,
-        row.dilutedShares
-      ),
-    }));
+    return history.map((item) => {
+      if (
+        item.freeCashFlow === null ||
+        item.dilutedShares === null ||
+        item.dilutedShares === 0
+      ) {
+        return {
+          ...item,
+          value: null,
+        };
+      }
+
+      return {
+        ...item,
+        value:
+          item.freeCashFlow /
+          item.dilutedShares,
+      };
+    });
   }, [history]);
 
   const superRoic = useMemo(() => {
-    return history
-      .map((row) => ({
-        year: row.year,
-        value: calculateSuperRoic(
-          row.freeCashFlow,
-          row.stockBasedCompensation,
-          row.totalAssets,
-          row.goodwill,
-          row.currentLiabilities
-        ),
-      }))
-      .filter(
-        (row) =>
-          row.value !== null &&
-          Number.isFinite(row.value)
-      )
-      .slice(-5);
+    return history.map((item) => ({
+      ...item,
+      value: calculateSuperRoic(item),
+    }));
   }, [history]);
 
-  const cashDebt = useMemo(() => {
-    return history.map((row) => ({
-      year: row.year,
-      cash:
-        row.cash === null
-          ? null
-          : row.cash / 1_000_000,
-      debt:
-        row.totalDebt === null
-          ? null
-          : row.totalDebt / 1_000_000,
+  const grossMargin = useMemo(() => {
+    return history.map((item) => {
+      if (
+        item.revenue === null ||
+        item.grossProfit === null ||
+        item.revenue === 0
+      ) {
+        return {
+          ...item,
+          value: null,
+        };
+      }
+
+      return {
+        ...item,
+        value:
+          (item.grossProfit / item.revenue) *
+          100,
+      };
+    });
+  }, [history]);
+
+  const fcfMargin = useMemo(() => {
+    return history.map((item) => {
+      if (
+        item.revenue === null ||
+        item.freeCashFlow === null ||
+        item.revenue === 0
+      ) {
+        return {
+          ...item,
+          value: null,
+        };
+      }
+
+      return {
+        ...item,
+        value:
+          (item.freeCashFlow / item.revenue) *
+          100,
+      };
+    });
+  }, [history]);
+
+  const dilutedShares = useMemo(() => {
+    return history.map((item) => ({
+      ...item,
+      value: item.dilutedShares,
     }));
   }, [history]);
 
   return (
-    <main
-      className={`${gothicFont.variable} min-h-screen bg-[#f3eee3] px-4 pb-20 text-[#40372f] sm:px-6 lg:px-10`}
-    >
+    <main className="min-h-screen bg-[#f4efe6] px-5 pb-16 text-[#40372f] sm:px-8 lg:px-10">
       <div className="mx-auto max-w-[1500px]">
-
         <header className="pb-8 pt-10 sm:pb-10 sm:pt-14">
-
           <div className="flex items-end justify-between gap-8">
-
             <div className="flex items-end gap-8">
-
               <h1
                 className="text-[48px] leading-none tracking-[-0.035em] text-[#40372f] sm:text-[58px]"
                 style={{
@@ -1398,14 +1243,12 @@ export default function GraphiquesPage() {
                     <p className="mt-1 font-serif text-sm text-[#6f6358]">
                       {history[0]?.year} —{" "}
                       {
-                        history[
-                          history.length - 1
-                        ]?.year
+                        history[history.length - 1]
+                          ?.year
                       }
                     </p>
                   </div>
                 )}
-
             </div>
 
             <div className="pb-1 text-right">
@@ -1417,205 +1260,181 @@ export default function GraphiquesPage() {
                 {COMPANY_LABELS[company]}
               </p>
             </div>
-
           </div>
 
           <div className="mt-7 h-px bg-[#d9d0c3]" />
-
         </header>
 
         {loading && (
-          <div className="rounded-[22px] border border-[#ded6ca] bg-[#fdfbf5] px-6 py-16 text-center shadow-[0_8px_30px_rgba(84,68,48,0.05)]">
-            <p className="font-serif text-lg text-[#65594e]">
-              Chargement de l&apos;historique…
-            </p>
-
-            <p className="mt-2 text-xs text-[#9a8f83]">
-              Récupération des données
-              financières.
-            </p>
+          <div className="rounded-[22px] border border-[#ded6ca] bg-[#fdfbf5] p-8 text-center font-serif text-sm text-[#8b7d70]">
+            Chargement de l&apos;historique financier…
           </div>
         )}
 
         {!loading && error && (
-          <div className="rounded-[22px] border border-[#d8c2b8] bg-[#fbf3ed] px-6 py-10 text-center">
-            <p className="font-serif text-lg text-[#704f43]">
-              Impossible de charger les
-              données
-            </p>
+          <div className="rounded-[22px] border border-[#ded6ca] bg-[#fdfbf5] p-8 text-center font-serif text-sm text-[#8b7d70]">
+            Impossible de charger les données.
 
-            <p className="mt-2 text-xs text-[#9a776b]">
+            <div className="mt-2 text-xs text-[#a3988d]">
               {error}
-            </p>
+            </div>
           </div>
         )}
 
         {!loading &&
           !error &&
           history.length > 0 && (
-            <>
-              <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+              <GraphCard
+                title="Croissance du CA"
+                subtitle="Évolution annuelle du chiffre d’affaires."
+              >
+                <PremiumBarChart
+                  data={revenueGrowth}
+                  getValue={(item) =>
+                    "value" in item &&
+                    typeof item.value === "number"
+                      ? item.value
+                      : null
+                  }
+                  formatValue={(value) =>
+                    formatPercent(value)
+                  }
+                />
+              </GraphCard>
 
-                {/* RANGÉE 1 */}
+              <GraphCard
+                title="Free Cash Flow"
+                subtitle="Free Cash Flow annuel."
+              >
+                <PremiumBarChart
+                  data={fcfAnnual}
+                  getValue={(item) =>
+                    "value" in item &&
+                    typeof item.value === "number"
+                      ? item.value
+                      : null
+                  }
+                  formatValue={(value) =>
+                    formatMillions(value)
+                  }
+                />
+              </GraphCard>
 
-                <GraphCard
-                  title="Croissance du chiffre d'affaires"
-                  description="Évolution annuelle du chiffre d'affaires"
-                >
-                  <PremiumBarChart
-                    data={revenueGrowth}
-                    valueKey="revenue-growth"
-                    formatter={(value) =>
-                      value === null
-                        ? "—"
-                        : `${formatNumber(
-                            value,
-                            0
-                          )} M€`
-                    }
-                  />
-                </GraphCard>
+              <GraphCard
+                title="FCF / action"
+                subtitle="Free Cash Flow rapporté au nombre moyen d’actions diluées."
+              >
+                <PremiumBarChart
+                  data={fcfPerShare}
+                  getValue={(item) =>
+                    "value" in item &&
+                    typeof item.value === "number"
+                      ? item.value
+                      : null
+                  }
+                  formatValue={(value) =>
+                    `${formatNumber(value, 2)} €`
+                  }
+                />
+              </GraphCard>
 
-                <GraphCard
-                  title="Free Cash Flow annuel"
-                  description="Flux de trésorerie disponible généré chaque année"
-                >
-                  <PremiumBarChart
-                    data={history.map(
-                      (row) => ({
-                        year: row.year,
-                        value:
-                          row.freeCashFlow ===
-                          null
-                            ? null
-                            : row.freeCashFlow /
-                              1_000_000,
-                      })
-                    )}
-                    valueKey="free-cash-flow"
-                    formatter={(value) =>
-                      value === null
-                        ? "—"
-                        : `${formatNumber(
-                            value,
-                            0
-                          )} M€`
-                    }
-                  />
-                </GraphCard>
+              <GraphCard
+                title="Super ROIC"
+                subtitle="(FCF − SBC) / (Actifs totaux − Goodwill − Passifs courants)."
+              >
+                <PremiumLineChart
+                  data={superRoic}
+                  getValue={(item) =>
+                    "value" in item &&
+                    typeof item.value === "number"
+                      ? item.value
+                      : null
+                  }
+                  formatValue={(value) =>
+                    formatPercent(value)
+                  }
+                  zeroLine
+                />
+              </GraphCard>
 
-                <GraphCard
-                  title="Free Cash Flow par action"
-                  description="Free Cash Flow rapporté au nombre d'actions diluées"
-                >
-                  <PremiumBarChart
-                    data={fcfPerShare}
-                    valueKey="fcf-per-share"
-                    formatter={
-                      formatPerShare
-                    }
-                  />
-                </GraphCard>
+              <GraphCard
+                title="Marge brute"
+                subtitle="Résultat brut rapporté au chiffre d’affaires."
+              >
+                <PremiumLineChart
+                  data={grossMargin}
+                  getValue={(item) =>
+                    "value" in item &&
+                    typeof item.value === "number"
+                      ? item.value
+                      : null
+                  }
+                  formatValue={(value) =>
+                    formatPercent(value)
+                  }
+                />
+              </GraphCard>
 
-                {/* RANGÉE 2 */}
+              <GraphCard
+                title="Marge FCF"
+                subtitle="Free Cash Flow rapporté au chiffre d’affaires."
+              >
+                <PremiumLineChart
+                  data={fcfMargin}
+                  getValue={(item) =>
+                    "value" in item &&
+                    typeof item.value === "number"
+                      ? item.value
+                      : null
+                  }
+                  formatValue={(value) =>
+                    formatPercent(value)
+                  }
+                />
+              </GraphCard>
 
-                <GraphCard
-                  title="Super ROIC"
-                  description="(FCF − SBC) / (Total Assets − Goodwill − Current Liabilities)"
-                >
-                  <PremiumLineChart
-                    data={superRoic}
-                    valueKey="super-roic"
-                    percent
-                    formatter={formatPercent}
-                  />
-                </GraphCard>
+              <GraphCard
+                title="Actions diluées"
+                subtitle="Nombre moyen d’actions diluées."
+              >
+                <PremiumBarChart
+                  data={dilutedShares}
+                  getValue={(item) =>
+                    "value" in item &&
+                    typeof item.value === "number"
+                      ? item.value
+                      : null
+                  }
+                  formatValue={(value) =>
+                    formatNumber(value, 0)
+                  }
+                />
+              </GraphCard>
 
-                <GraphCard
-                  title="Marge brute"
-                  description="Résultat brut rapporté au chiffre d'affaires"
-                >
-                  <PremiumLineChart
-                    data={grossMargin}
-                    valueKey="gross-margin"
-                    percent
-                    formatter={formatPercent}
-                  />
-                </GraphCard>
-
-                <GraphCard
-                  title="Marge du Free Cash Flow"
-                  description="Free Cash Flow rapporté au chiffre d'affaires"
-                >
-                  <PremiumLineChart
-                    data={fcfMargin}
-                    valueKey="fcf-margin"
-                    percent
-                    formatter={formatPercent}
-                  />
-                </GraphCard>
-
-                {/* RANGÉE 3 */}
-
-                <GraphCard
-                  title="Actions en circulation diluées"
-                  description="Évolution du nombre moyen d'actions diluées"
-                >
-                  <PremiumBarChart
-                    data={history.map(
-                      (row) => ({
-                        year: row.year,
-                        value:
-                          row.dilutedShares ===
-                          null
-                            ? null
-                            : row.dilutedShares /
-                              1_000_000,
-                      })
-                    )}
-                    valueKey="diluted-shares"
-                    formatter={(value) =>
-                      value === null
-                        ? "—"
-                        : `${formatNumber(
-                            value,
-                            1
-                          )} M`
-                    }
-                  />
-                </GraphCard>
-
-                <GraphCard
-                  title="Cash & dettes"
-                  description="Évolution de la trésorerie et de la dette totale"
-                >
-                  <PremiumCashDebtChart
-                    data={cashDebt}
-                  />
-                </GraphCard>
-
-              </div>
-            </>
-          )}
-
-        {!loading &&
-          !error &&
-          history.length === 0 && (
-            <div className="rounded-[22px] border border-[#ded6ca] bg-[#fdfbf5] px-6 py-16 text-center">
-              <p className="font-serif text-lg text-[#65594e]">
-                Aucune donnée historique
-                disponible.
-              </p>
+              <GraphCard
+                title="Cash & Dette"
+                subtitle="Évolution annuelle de la trésorerie et de la dette totale."
+              >
+                <PremiumCashDebtChart
+                  data={history}
+                />
+              </GraphCard>
             </div>
           )}
 
-        <footer className="mt-8 border-t border-[#d9d0c3] pt-5 text-[10px] leading-5 text-[#a0968a]">
-          Données historiques financières.
-          Les valeurs non disponibles restent
-          indisponibles.
+        <footer className="pb-8 pt-10 text-center font-serif text-xs text-[#9b8e80]">
+          Données financières historiques · Investisseur Perso
         </footer>
-
       </div>
     </main>
+  );
+}
+
+export default function GraphiquesPage() {
+  return (
+    <Suspense fallback={null}>
+      <GraphiquesContent />
+    </Suspense>
   );
 }
