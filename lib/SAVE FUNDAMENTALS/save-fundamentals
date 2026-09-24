@@ -382,10 +382,7 @@ function setField(
     HistoricalFundamental
   >,
   year: number,
-  field: Exclude<
-    keyof HistoricalFundamental,
-    "year"
-  >,
+  field: keyof HistoricalFundamental,
   value: number | null
 ) {
   const existing = target.get(year);

@@ -2,16 +2,19 @@ export const investmentCriteria = [
   {
     id: 1,
     name: "Free Cash Flow",
-    description: "Le Free Cash Flow doit être positif.",
+    description:
+      "Le Free Cash Flow doit être positif.",
     threshold: "> 0",
   },
+
   {
     id: 2,
-    name: "Dette nette / FCF",
+    name: "Dette nette / Unlevered FCF",
     description:
-      "La dette nette doit être inférieure à 3 fois le Free Cash Flow.",
+      "La dette nette doit être inférieure à 3 fois l'Unlevered Free Cash Flow.",
     threshold: "< 3",
   },
+
   {
     id: 3,
     name: "ROCE",
@@ -19,6 +22,7 @@ export const investmentCriteria = [
       "La moyenne du ROCE sur les 5 derniers exercices doit être supérieure à 15 %.",
     threshold: "> 15 %",
   },
+
   {
     id: 4,
     name: "Croissance du FCF",
@@ -26,6 +30,7 @@ export const investmentCriteria = [
       "Le Free Cash Flow doit progresser de plus de 10 % chaque année.",
     threshold: "> 10 % / an",
   },
+
   {
     id: 5,
     name: "Croissance du chiffre d'affaires",
@@ -33,6 +38,7 @@ export const investmentCriteria = [
       "Le chiffre d'affaires doit progresser de plus de 10 % chaque année.",
     threshold: "> 10 % / an",
   },
+
   {
     id: 6,
     name: "Nombre d'actions",
@@ -40,6 +46,7 @@ export const investmentCriteria = [
       "Le nombre moyen d'actions diluées doit rester stable ou diminuer chaque année.",
     threshold: "≤ 0 % / an",
   },
+
   {
     id: 7,
     name: "Cash Conversion Rate",
@@ -47,6 +54,7 @@ export const investmentCriteria = [
       "Le Free Cash Flow / bénéfice net doit être supérieur à 1 chaque année.",
     threshold: "> 1",
   },
+
   {
     id: 8,
     name: "Marge FCF",

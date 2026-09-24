@@ -1,405 +1,919 @@
 "use client";
 
-import localFont from "next/font/local";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-
-const unifraktur = localFont({
-  src: "../app/fonts/UnifrakturMaguntia-Book.ttf",
-  display: "swap",
-});
 
 type AnnualFundamental = {
   year: number;
-  freeCashFlow: number | null;
   revenue: number | null;
-  operatingIncome: number | null;
-  taxProvision: number | null;
-  pretaxIncome: number | null;
+  freeCashFlow: number | null;
+  unleveredFreeCashFlow: number | null;
   dilutedAverageShares: number | null;
-  stockholdersEquity: number | null;
-  netIncome: number | null;
   totalDebt: number | null;
   cashAndShortTermInvestments: number | null;
+  netDebt: number | null;
 };
+
+type CompanyData = {
+  company: string;
+  isin: string;
+  symbol: string;
+  annual: AnnualFundamental[];
+  latestAnnual: AnnualFundamental | null;
+};
+
+type ApiResponse = {
+  success: boolean;
+
+  companies: {
+    LVMH: CompanyData;
+    Hermès: CompanyData;
+  };
+
+  error?: string;
+};
+
+type StockAnalysisResponse = {
+  balanceSheet?: {
+    netDebt: number | null;
+  };
+
+  annualCashFlow?: {
+    year: number;
+    unleveredFreeCashFlow: number | null;
+  };
+};
+
+/* =========================================================
+   HISTORICAL FUNDAMENTALS
+   ========================================================= */
+
+type HistoricalFundamental = {
+  year: number;
+  revenue: number | null;
+  grossProfit: number | null;
+  operatingIncome: number | null;
+  freeCashFlow: number | null;
+  unleveredFreeCashFlow: number | null;
+  totalAssets: number | null;
+  goodwill: number | null;
+  currentLiabilities: number | null;
+  shortTermDebt: number | null;
+  longTermDebt: number | null;
+  totalDebt: number | null;
+  cash: number | null;
+  cashAndShortTermInvestments: number | null;
+  dilutedShares: number | null;
+  employees: number | null;
+  stockBasedCompensation: number | null;
+};
+
+type HistoricalFundamentalsResponse = {
+  LVMH: HistoricalFundamental[];
+  Hermès: HistoricalFundamental[];
+};
+
+/*
+ * LVMH : les rapports annuels donnent les dépenses
+ * liées aux "Bonus share plans".
+ *
+ * Nous les utilisons ici pour compléter les deux années
+ * actuellement absentes de /api/historical-fundamentals.
+ *
+ * Important :
+ * 2024 : 127 M€
+ * 2025 : 165 M€
+ *
+ * Ces valeurs sont en euros ici car l'API historique
+ * travaille en euros.
+ */
+const LVMH_SBC_FALLBACK: Record<number, number> = {
+  2024: 127_000_000,
+  2025: 165_000_000,
+};
+
+/* =========================================================
+   CRITERIA
+   ========================================================= */
 
 type Criterion = {
-  id: number;
+  id: string;
   title: string;
+  subtitle: string;
+  value: number | null;
+  threshold: string;
+  passed: boolean | null;
+  disabled?: boolean;
 };
 
+/* =========================================================
+   PROPS
+   ========================================================= */
+
 type InvestmentCriteriaProps = {
-  company: string;
+  company: "LVMH" | "Hermès";
 };
+
+/* =========================================================
+   CALCULATION HELPERS
+   ========================================================= */
+
+function calculateCagr(
+  start: number | null,
+  end: number | null,
+  years: number
+): number | null {
+  if (
+    start === null ||
+    end === null ||
+    years <= 0 ||
+    start <= 0 ||
+    end <= 0
+  ) {
+    return null;
+  }
+
+  return (Math.pow(end / start, 1 / years) - 1) * 100;
+}
+
+function calculateTotalChange(
+  start: number | null,
+  end: number | null
+): number | null {
+  if (
+    start === null ||
+    end === null ||
+    start <= 0
+  ) {
+    return null;
+  }
+
+  return (end / start - 1) * 100;
+}
+
+function getCriteriaYears(
+  data: AnnualFundamental[]
+) {
+  return [...data]
+    .filter((item) => item.year >= 2020)
+    .sort((a, b) => a.year - b.year);
+}
+
+function calculateAverageFcfMargin(
+  data: AnnualFundamental[]
+): number | null {
+  const margins = data
+    .map((item) => {
+      if (
+        item.freeCashFlow === null ||
+        item.revenue === null ||
+        item.revenue <= 0
+      ) {
+        return null;
+      }
+
+      return (
+        (item.freeCashFlow / item.revenue) * 100
+      );
+    })
+    .filter(
+      (value): value is number =>
+        value !== null
+    );
+
+  if (margins.length === 0) {
+    return null;
+  }
+
+  return (
+    margins.reduce(
+      (sum, value) => sum + value,
+      0
+    ) / margins.length
+  );
+}
+
+/* =========================================================
+   SUPER ROIC
+   ========================================================= */
+
+/*
+ * Formule exacte :
+ *
+ * Super ROIC =
+ *
+ * (FCF - SBC)
+ * -------------------------------
+ * Total Assets - Goodwill - Current Liabilities
+ *
+ * puis x 100
+ */
+
+function calculateSuperRoicForYear(
+  data: HistoricalFundamental
+): number | null {
+  const fcf = data.freeCashFlow;
+
+  let sbc = data.stockBasedCompensation;
+
+  /*
+   * L'API historique ne possède actuellement pas
+   * les SBC LVMH 2024 et 2025.
+   *
+   * On complète uniquement ces deux années avec
+   * les valeurs vérifiées dans les rapports annuels.
+   */
+  if (
+    sbc === null &&
+    data.year in LVMH_SBC_FALLBACK
+  ) {
+    sbc = LVMH_SBC_FALLBACK[data.year];
+  }
+
+  const totalAssets = data.totalAssets;
+  const goodwill = data.goodwill;
+  const currentLiabilities =
+    data.currentLiabilities;
+
+  if (
+    fcf === null ||
+    sbc === null ||
+    totalAssets === null ||
+    goodwill === null ||
+    currentLiabilities === null
+  ) {
+    return null;
+  }
+
+  const numerator = fcf - sbc;
+
+  const denominator =
+    totalAssets -
+    goodwill -
+    currentLiabilities;
+
+  if (denominator <= 0) {
+    return null;
+  }
+
+  return (numerator / denominator) * 100;
+}
+
+function calculateFiveYearSuperRoic(
+  data: HistoricalFundamental[]
+): {
+  average: number | null;
+  yearly: {
+    year: number;
+    value: number | null;
+  }[];
+  completeYears: number;
+} {
+  const targetYears = [2021, 2022, 2023, 2024, 2025];
+
+  const yearly = targetYears.map((year) => {
+    const yearData =
+      data.find(
+        (item) => item.year === year
+      ) ?? null;
+
+    return {
+      year,
+      value: yearData
+        ? calculateSuperRoicForYear(yearData)
+        : null,
+    };
+  });
+
+  const validValues = yearly
+    .map((item) => item.value)
+    .filter(
+      (value): value is number =>
+        value !== null
+    );
+
+  if (validValues.length !== 5) {
+    return {
+      average: null,
+      yearly,
+      completeYears: validValues.length,
+    };
+  }
+
+  const average =
+    validValues.reduce(
+      (sum, value) => sum + value,
+      0
+    ) / validValues.length;
+
+  return {
+    average,
+    yearly,
+    completeYears: validValues.length,
+  };
+}
+
+/* =========================================================
+   FORMATTING
+   ========================================================= */
+
+function formatBillions(
+  value: number | null
+): string {
+  if (value === null) {
+    return "—";
+  }
+
+  return `${(value / 1_000).toFixed(2)} Md€`;
+}
+
+function formatRatio(
+  value: number | null
+): string {
+  if (value === null) {
+    return "—";
+  }
+
+  return value.toFixed(2);
+}
+
+/* =========================================================
+   COMPONENT
+   ========================================================= */
 
 export default function InvestmentCriteria({
   company,
 }: InvestmentCriteriaProps) {
   const router = useRouter();
 
-  const [data, setData] = useState<AnnualFundamental[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [apiData, setApiData] =
+    useState<ApiResponse | null>(null);
+
+  const [
+    stockAnalysisData,
+    setStockAnalysisData,
+  ] =
+    useState<StockAnalysisResponse | null>(
+      null
+    );
+
+  const [
+    historicalData,
+    setHistoricalData,
+  ] =
+    useState<HistoricalFundamentalsResponse | null>(
+      null
+    );
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadData() {
       try {
         setLoading(true);
-        setError(false);
+        setError(null);
 
-        const response = await fetch("/api/test-fundamentals");
+        const stockAnalysisTicker =
+          company === "LVMH"
+            ? "MC"
+            : "RMS";
 
-        if (!response.ok) {
-          throw new Error("Erreur API");
+        const [
+          fundamentalsResponse,
+          stockAnalysisResponse,
+          historicalResponse,
+        ] = await Promise.all([
+          fetch(
+            "/api/test-fundamentals",
+            {
+              cache: "no-store",
+            }
+          ),
+
+          fetch(
+            `/api/financials/stockanalysis?ticker=${stockAnalysisTicker}`,
+            {
+              cache: "no-store",
+            }
+          ),
+
+          fetch(
+            "/api/historical-fundamentals",
+            {
+              cache: "no-store",
+            }
+          ),
+        ]);
+
+        if (!fundamentalsResponse.ok) {
+          throw new Error(
+            `Erreur fondamentaux (${fundamentalsResponse.status})`
+          );
         }
 
-        const result = await response.json();
+        const fundamentals =
+          (await fundamentalsResponse.json()) as ApiResponse;
 
-        const companyData =
-          result[company] ??
-          result.LVMH ??
-          result["Hermès"] ??
-          [];
+        let stockAnalysis:
+          | StockAnalysisResponse
+          | null = null;
 
-        setData(companyData);
+        if (
+          stockAnalysisResponse.ok
+        ) {
+          stockAnalysis =
+            (await stockAnalysisResponse.json()) as StockAnalysisResponse;
+        }
+
+        let historical:
+          | HistoricalFundamentalsResponse
+          | null = null;
+
+        if (
+          historicalResponse.ok
+        ) {
+          historical =
+            (await historicalResponse.json()) as HistoricalFundamentalsResponse;
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setApiData(fundamentals);
+        setStockAnalysisData(
+          stockAnalysis
+        );
+        setHistoricalData(
+          historical
+        );
       } catch (err) {
-        console.error("Erreur récupération critères :", err);
-        setError(true);
+        if (cancelled) {
+          return;
+        }
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Impossible de récupérer les données."
+        );
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     loadData();
+
+    return () => {
+      cancelled = true;
+    };
   }, [company]);
+
+  /* =======================================================
+     EXISTING FUNDAMENTAL DATA
+     ======================================================= */
+
+  const companyData =
+    apiData?.companies?.[company] ??
+    null;
+
+  const annualData =
+    companyData?.annual ?? [];
+
+  const criteriaYears = useMemo(
+    () =>
+      getCriteriaYears(
+        annualData
+      ),
+    [annualData]
+  );
+
+  const firstYear =
+    criteriaYears[0]?.year ??
+    null;
+
+  const lastYear =
+    criteriaYears[
+      criteriaYears.length - 1
+    ]?.year ?? null;
+
+  const firstData =
+    criteriaYears[0] ?? null;
+
+  const lastData =
+    criteriaYears[
+      criteriaYears.length - 1
+    ] ?? null;
+
+  /* =======================================================
+     CRITERION 1 — REVENUE CAGR
+     ======================================================= */
+
+  const revenueGrowth =
+    firstData &&
+    lastData &&
+    firstYear !== null &&
+    lastYear !== null
+      ? calculateCagr(
+          firstData.revenue,
+          lastData.revenue,
+          lastYear - firstYear
+        )
+      : null;
+
+  /* =======================================================
+     CRITERION 2 — NET DEBT / UFCF
+     ======================================================= */
+
+  const latestUfcf =
+    lastData?.unleveredFreeCashFlow ??
+    null;
+
+  const stockAnalysisNetDebt =
+    stockAnalysisData?.balanceSheet
+      ?.netDebt ?? null;
+
+  const yahooNetDebt =
+    lastData?.netDebt ?? null;
+
+  const stockAnalysisNetDebtMillions =
+    stockAnalysisNetDebt !== null
+      ? stockAnalysisNetDebt /
+        1_000_000
+      : null;
+
+  const netDebt =
+    stockAnalysisNetDebtMillions ??
+    yahooNetDebt;
+
+  const netDebtToUfcf =
+    netDebt !== null &&
+    latestUfcf !== null &&
+    latestUfcf !== 0
+      ? netDebt / latestUfcf
+      : null;
+
+  const netDebtToUfcfSubtitle =
+    netDebt !== null &&
+    latestUfcf !== null &&
+    lastYear !== null
+      ? `${formatBillions(
+          netDebt
+        )} ÷ ${formatBillions(
+          latestUfcf
+        )} (${lastYear})`
+      : "Données insuffisantes";
+
+  /* =======================================================
+     CRITERION 3 — FCF CAGR
+     ======================================================= */
+
+  const fcfGrowth =
+    firstData &&
+    lastData &&
+    firstYear !== null &&
+    lastYear !== null
+      ? calculateCagr(
+          firstData.freeCashFlow,
+          lastData.freeCashFlow,
+          lastYear - firstYear
+        )
+      : null;
+
+  /* =======================================================
+     CRITERION 4 — DILUTED SHARES
+     ======================================================= */
+
+  const sharesGrowth =
+    firstData && lastData
+      ? calculateTotalChange(
+          firstData.dilutedAverageShares,
+          lastData.dilutedAverageShares
+        )
+      : null;
+
+  /* =======================================================
+     CRITERION 5 — SUPER ROIC
+     ======================================================= */
+
+  const historicalCompanyData =
+    historicalData?.[company] ?? [];
+
+  const superRoicCalculation =
+    calculateFiveYearSuperRoic(
+      historicalCompanyData
+    );
+
+  const superRoic =
+    superRoicCalculation.average;
+
+  const superRoicComplete =
+    superRoicCalculation.completeYears ===
+    5;
+
+  const superRoicSubtitle =
+    superRoicComplete
+      ? "moyenne 2021 → 2025"
+      : `${superRoicCalculation.completeYears}/5 années disponibles — 2021 → 2025`;
+
+  /* =======================================================
+     CRITERION 6 — FCF MARGIN
+     ======================================================= */
+
+  const fcfMargin =
+    calculateAverageFcfMargin(
+      criteriaYears
+    );
+
+  /* =======================================================
+     CRITERIA LIST
+     ======================================================= */
 
   const criteria: Criterion[] = [
     {
-      id: 1,
+      id: "revenue-growth",
       title:
-        "Croissance du chiffre d'affaires (par an sur les 5 dernières années - Doit être supérieur à 10%)",
+        "Croissance du chiffre d'affaires",
+      subtitle:
+        "par an sur les 5 dernières années, doit être supérieur à 10 %",
+      value: revenueGrowth,
+      threshold: "> 10 %",
+      passed:
+        revenueGrowth === null
+          ? null
+          : revenueGrowth > 10,
     },
+
     {
-      id: 2,
+      id: "net-debt-fcf",
       title:
-        "Dette nette / Free cash flow (au dernier trimestre - doit être inférieur à 3)",
+        "Dette nette / Free Cash Flow",
+      subtitle:
+        "au dernier trimestre, doit être inférieur à 3",
+      value: netDebtToUfcf,
+      threshold: "< 3",
+      passed:
+        netDebtToUfcf === null
+          ? null
+          : netDebtToUfcf < 3,
     },
+
     {
-      id: 3,
+      id: "fcf-growth",
       title:
-        "Croissance du free cash flow (par an sur les 5 dernières années - doit être supérieur à 10 %)",
+        "Croissance du Free Cash Flow",
+      subtitle:
+        "par an sur les 5 dernières années, doit être supérieur à 10 %",
+      value: fcfGrowth,
+      threshold: "> 10 %",
+      passed:
+        fcfGrowth === null
+          ? null
+          : fcfGrowth > 10,
     },
+
     {
-      id: 4,
+      id: "shares-growth",
       title:
-        "Nombre d'actions en circulation (sur les 5 dernières années - doit être inférieur ou égal à 0 %)",
+        "Nombre d'actions en circulation",
+      subtitle:
+        "sur les 5 dernières années, doit être inférieur ou égal à 0 %",
+      value: sharesGrowth,
+      threshold: "≤ 0 %",
+      passed:
+        sharesGrowth === null
+          ? null
+          : sharesGrowth <= 0,
     },
+
     {
-      id: 5,
-      title:
-        "Super ROIC (en moyenne sur 5 ans - doit être supérieur à 15 %)",
+      id: "super-roic",
+      title: "Super ROIC",
+      subtitle:
+        "en moyenne sur 5 ans, doit être supérieur à 15 %",
+      value: superRoic,
+      threshold: "> 15 %",
+      passed:
+        superRoic === null
+          ? null
+          : superRoic > 15,
+      disabled: !superRoicComplete,
     },
+
     {
-      id: 6,
+      id: "fcf-margin",
       title:
-        "Marge du free cash flow (en moyenne sur 5 ans - doit être supérieur à 10 %)",
+        "Marge du Free Cash Flow",
+      subtitle:
+        "en moyenne sur 5 ans, doit être supérieur à 10 %",
+      value: fcfMargin,
+      threshold: "> 10 %",
+      passed:
+        fcfMargin === null
+          ? null
+          : fcfMargin > 10,
     },
   ];
 
-  function renderTitle(title: string) {
-    const openingParenthesis = title.indexOf("(");
+  /* =======================================================
+     DISPLAY HELPERS
+     ======================================================= */
 
-    if (openingParenthesis === -1) {
-      return {
-        mainTitle: title,
-        parentheticalText: "",
-      };
-    }
-
-    return {
-      mainTitle: title.slice(0, openingParenthesis).trim(),
-      parentheticalText: title.slice(openingParenthesis),
-    };
-  }
-
-  function calculateCagr(
-    startValue: number | null,
-    endValue: number | null,
-    years: number
+  function formatValue(
+    value: number | null,
+    criterionId: string
   ) {
+    if (value === null) {
+      return "—";
+    }
+
     if (
-      startValue === null ||
-      endValue === null ||
-      startValue <= 0 ||
-      endValue <= 0
+      criterionId ===
+      "net-debt-fcf"
     ) {
-      return null;
+      return formatRatio(value);
     }
 
-    return (Math.pow(endValue / startValue, 1 / years) - 1) * 100;
+    return `${value.toFixed(2)} %`;
   }
 
-  function calculateAverage(values: number[]) {
-    if (values.length === 0) {
-      return null;
+  function getValueColor(
+    criterion: Criterion
+  ) {
+    if (criterion.disabled) {
+      return "text-[#aaa09d]";
     }
 
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
+    if (criterion.passed === true) {
+      return "text-[#667c5d]";
+    }
+
+    if (criterion.passed === false) {
+      return "text-[#a76259]";
+    }
+
+    return "text-[#75666a]";
   }
 
-  function getCriterionResult(id: number) {
-    if (data.length < 2) {
-      return {
-        value: null,
-        passed: null,
-      };
-    }
-
-    const sortedData = [...data].sort((a, b) => a.year - b.year);
-
-    if (id === 1) {
-      const first = sortedData[0];
-      const last = sortedData[sortedData.length - 1];
-
-      const growth = calculateCagr(
-        first.revenue,
-        last.revenue,
-        sortedData.length - 1
-      );
-
-      return {
-        value: growth,
-        passed: growth !== null ? growth > 10 : null,
-      };
-    }
-
-    // Criterion 2 currently uses latest annual record as placeholder.
-    // Definitive criterion should use latest quarter; quarterly data not yet retrieved.
-    if (id === 2) {
-      const last = sortedData[sortedData.length - 1];
-
-      if (
-        last.totalDebt === null ||
-        last.cashAndShortTermInvestments === null ||
-        last.freeCashFlow === null ||
-        last.freeCashFlow === 0
-      ) {
-        return {
-          value: null,
-          passed: null,
-        };
-      }
-
-      const netDebt =
-        last.totalDebt - last.cashAndShortTermInvestments;
-
-      const ratio = netDebt / last.freeCashFlow;
-
-      return {
-        value: ratio,
-        passed: ratio < 3,
-      };
-    }
-
-    if (id === 3) {
-      const first = sortedData[0];
-      const last = sortedData[sortedData.length - 1];
-
-      const growth = calculateCagr(
-        first.freeCashFlow,
-        last.freeCashFlow,
-        sortedData.length - 1
-      );
-
-      return {
-        value: growth,
-        passed: growth !== null ? growth > 10 : null,
-      };
-    }
-
-    if (id === 4) {
-      const first = sortedData[0];
-      const last = sortedData[sortedData.length - 1];
-
-      const growth = calculateCagr(
-        first.dilutedAverageShares,
-        last.dilutedAverageShares,
-        sortedData.length - 1
-      );
-
-      return {
-        value: growth,
-        passed: growth !== null ? growth <= 0 : null,
-      };
-    }
-
-    if (id === 5) {
-      const roicValues = sortedData
-        .map((item) => {
-          if (
-            item.operatingIncome === null ||
-            item.taxProvision === null ||
-            item.pretaxIncome === null ||
-            item.stockholdersEquity === null ||
-            item.totalDebt === null ||
-            item.cashAndShortTermInvestments === null ||
-            item.pretaxIncome === 0
-          ) {
-            return null;
-          }
-
-          const taxRate =
-            item.taxProvision / item.pretaxIncome;
-
-          const nopat =
-            item.operatingIncome * (1 - taxRate);
-
-          const netDebt =
-            item.totalDebt -
-            item.cashAndShortTermInvestments;
-
-          const investedCapital =
-            item.stockholdersEquity + netDebt;
-
-          if (investedCapital === 0) {
-            return null;
-          }
-
-          return (nopat / investedCapital) * 100;
-        })
-        .filter((value): value is number => value !== null);
-
-      const average = calculateAverage(roicValues);
-
-      return {
-        value: average,
-        passed: average !== null ? average > 15 : null,
-      };
-    }
-
-    if (id === 6) {
-      const margins = sortedData
-        .map((item) => {
-          if (
-            item.freeCashFlow === null ||
-            item.revenue === null ||
-            item.revenue === 0
-          ) {
-            return null;
-          }
-
-          return (item.freeCashFlow / item.revenue) * 100;
-        })
-        .filter((value): value is number => value !== null);
-
-      const average = calculateAverage(margins);
-
-      return {
-        value: average,
-        passed: average !== null ? average > 10 : null,
-      };
-    }
-
-    return {
-      value: null,
-      passed: null,
-    };
-  }
+  /* =======================================================
+     LOADING
+     ======================================================= */
 
   if (loading) {
     return (
       <section className="mt-8">
-        <h2
-          className={`${unifraktur.className} mb-4 text-2xl font-normal leading-none text-slate-900`}
-        >
-          Critères d'investissement
-        </h2>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-6 text-slate-500 shadow-sm">
-          Chargement des fondamentaux…
+        <div className="rounded-2xl border border-[#d8d0cc] bg-white/60 p-8 text-center text-[#75666a]">
+          Chargement des données
+          fondamentales…
         </div>
       </section>
     );
   }
+
+  /* =======================================================
+     ERROR
+     ======================================================= */
 
   if (error) {
     return (
       <section className="mt-8">
-        <h2
-          className={`${unifraktur.className} mb-4 text-2xl font-normal leading-none text-slate-900`}
-        >
-          Critères d'investissement
-        </h2>
+        <div className="rounded-2xl border border-[#d8b8b3] bg-[#faf4f3] p-6 text-[#97564e]">
+          <div className="font-semibold">
+            Impossible de charger les
+            critères.
+          </div>
 
-        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
-          Impossible de récupérer les fondamentaux.
+          <div className="mt-2 text-sm">
+            {error}
+          </div>
         </div>
       </section>
     );
   }
 
+  /* =======================================================
+     RENDER
+     ======================================================= */
+
   return (
     <section className="mt-8">
-      <h2
-        className={`${unifraktur.className} mb-4 text-2xl font-normal leading-none text-slate-900`}
-      >
-        Critères d'investissement
-      </h2>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-3">
+        {criteria.map(
+          (criterion) => {
+            const clickable =
+              criterion.id ===
+                "revenue-growth" &&
+              !criterion.disabled;
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {criteria.map((criterion) => {
-          const result = getCriterionResult(criterion.id);
-          const titleParts = renderTitle(criterion.title);
+            return (
+              <button
+                key={criterion.id}
+                type="button"
+                disabled={!clickable}
+                onClick={() => {
+                  if (!clickable) {
+                    return;
+                  }
 
-          const cardClass =
-            result.passed === true
-              ? "border-green-200 bg-green-50"
-              : result.passed === false
-              ? "border-red-200 bg-red-50"
-              : "border-slate-200 bg-slate-50";
-
-          return (
-            <div
-              key={criterion.id}
-              onClick={() => {
-                if (criterion.id === 1) {
                   router.push(
                     `/graphes?company=${encodeURIComponent(
                       company
-                    )}&criterion=revenue-growth`
+                    )}&criterion=${encodeURIComponent(
+                      criterion.id
+                    )}`
                   );
-                }
-              }}
-              className={`min-h-[125px] rounded-xl border p-4 shadow-sm transition ${
-                criterion.id === 1
-                  ? "cursor-pointer hover:shadow-md"
-                  : ""
-              } ${cardClass}`}
-            >
-              <h3 className="text-base font-semibold leading-snug text-slate-900">
-                {titleParts.mainTitle}
-              </h3>
+                }}
+                className={`
+                  group
+                  w-full
+                  rounded-xl
+                  border
+                  px-5
+                  py-4
+                  text-left
+                  transition-all
+                  duration-200
+                  ${
+                    criterion.disabled
+                      ? "cursor-default border-[#d2cbc8] bg-[#e9e5e3] opacity-60"
+                      : criterion.passed ===
+                          true
+                        ? "cursor-default border-[#c7d2c1] bg-[#f5f8f3] hover:border-[#aebda7]"
+                        : criterion.passed ===
+                            false
+                          ? "cursor-default border-[#dcc4c0] bg-[#faf5f4] hover:border-[#c9a29c]"
+                          : "cursor-default border-[#d8d0cc] bg-white/65"
+                  }
+                  ${
+                    clickable
+                      ? "cursor-pointer hover:-translate-y-[1px] hover:shadow-sm"
+                      : ""
+                  }
+                `}
+              >
+                <div className="flex items-center justify-between gap-6">
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className={`text-base font-medium ${
+                        criterion.disabled
+                          ? "text-[#8f8582]"
+                          : "text-[#4b3940]"
+                      }`}
+                    >
+                      {criterion.title}
+                    </div>
 
-              {result.value !== null && criterion.id !== 2 && (
-                <div className="mt-3 text-4xl font-bold text-slate-900">
-                  {result.value.toFixed(1)} %
-                </div>
-              )}
+                    <div
+                      className={`mt-1 text-xs ${
+                        criterion.disabled
+                          ? "text-[#9b918e]"
+                          : "text-[#88797e]"
+                      }`}
+                    >
+                      {criterion.subtitle}
+                    </div>
 
-              {result.value !== null && criterion.id === 2 && (
-                <div className="mt-3 text-4xl font-bold text-slate-900">
-                  {result.value.toFixed(2)}
-                </div>
-              )}
+                    {criterion.disabled && (
+                      <div className="mt-1 text-[11px] italic text-[#9b918e]">
+                        Calcul momentanément
+                        indisponible
+                      </div>
+                    )}
+                  </div>
 
-              {titleParts.parentheticalText && (
-                <div className="mt-2 text-xs font-normal italic leading-snug text-slate-600">
-                  {titleParts.parentheticalText}
+                  <div className="flex shrink-0 items-center gap-5">
+                    <div className="text-right">
+                      <div
+                        className={`text-2xl font-semibold tracking-tight ${getValueColor(
+                          criterion
+                        )}`}
+                      >
+                        {formatValue(
+                          criterion.value,
+                          criterion.id
+                        )}
+                      </div>
+                    </div>
+
+                    {clickable && (
+                      <div className="text-lg text-[#9b898f] transition-transform duration-200 group-hover:translate-x-1">
+                        →
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          );
-        })}
+              </button>
+            );
+          }
+        )}
       </div>
     </section>
   );
