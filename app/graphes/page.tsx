@@ -1,12 +1,7 @@
 "use client";
 
 import localFont from "next/font/local";
-import {
-  Suspense,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const gothicFont = localFont({
@@ -22,36 +17,34 @@ type HistoricalFundamental = {
   operatingIncome: number | null;
   freeCashFlow: number | null;
   unleveredFreeCashFlow: number | null;
-  dilutedShares: number | null;
-  totalDebt: number | null;
-  cash: number | null;
   totalAssets: number | null;
   goodwill: number | null;
   currentLiabilities: number | null;
+  shortTermDebt: number | null;
+  longTermDebt: number | null;
+  totalDebt: number | null;
+  cash: number | null;
+  cashAndShortTermInvestments: number | null;
+  dilutedShares: number | null;
+  employees: number | null;
   stockBasedCompensation: number | null;
 };
 
 type HistoricalResponse = {
-  LVMH: HistoricalFundamental[];
-  Hermès: HistoricalFundamental[];
+  LVMH?: HistoricalFundamental[];
+  Hermès?: HistoricalFundamental[];
 };
 
 type Company = "LVMH" | "Hermès";
 
-type ChartPoint = {
-  year: number;
-  value: number | null;
-};
-
-type CashDebtPoint = {
-  year: number;
-  cash: number | null;
-  debt: number | null;
+const COMPANY_LABELS: Record<Company, string> = {
+  LVMH: "LVMH",
+  Hermès: "Hermès",
 };
 
 function formatNumber(
   value: number | null,
-  decimals = 1
+  decimals = 0
 ): string {
   if (value === null || !Number.isFinite(value)) {
     return "—";
@@ -63,23 +56,48 @@ function formatNumber(
   }).format(value);
 }
 
-function formatPercent(
+function formatMillions(
   value: number | null,
-  decimals = 1
+  decimals = 0
 ): string {
   if (value === null || !Number.isFinite(value)) {
     return "—";
   }
 
-  return `${formatNumber(value, decimals)} %`;
+  return `${formatNumber(value / 1_000_000, decimals)} M€`;
 }
 
-function sortHistory(
-  rows: HistoricalFundamental[]
-): HistoricalFundamental[] {
-  return [...rows].sort(
-    (a, b) => a.year - b.year
-  );
+function formatPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  return `${formatNumber(value, 1)} %`;
+}
+
+function formatPerShare(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "—";
+  }
+
+  return `${formatNumber(value, 2)} €`;
+}
+
+function calculateGrowth(
+  current: number | null,
+  previous: number | null
+): number | null {
+  if (
+    current === null ||
+    previous === null ||
+    previous === 0 ||
+    !Number.isFinite(current) ||
+    !Number.isFinite(previous)
+  ) {
+    return null;
+  }
+
+  return ((current - previous) / Math.abs(previous)) * 100;
 }
 
 function calculateMargin(
@@ -89,9 +107,9 @@ function calculateMargin(
   if (
     numerator === null ||
     denominator === null ||
+    denominator === 0 ||
     !Number.isFinite(numerator) ||
-    !Number.isFinite(denominator) ||
-    denominator === 0
+    !Number.isFinite(denominator)
   ) {
     return null;
   }
@@ -101,19 +119,28 @@ function calculateMargin(
 
 function calculateFcfPerShare(
   freeCashFlow: number | null,
-  dilutedShares: number | null
+  shares: number | null
 ): number | null {
   if (
     freeCashFlow === null ||
-    dilutedShares === null ||
+    shares === null ||
+    shares === 0 ||
     !Number.isFinite(freeCashFlow) ||
-    !Number.isFinite(dilutedShares) ||
-    dilutedShares === 0
+    !Number.isFinite(shares)
   ) {
     return null;
   }
 
-  return freeCashFlow / dilutedShares;
+  const sharesInUnits =
+    shares > 1_000_000
+      ? shares
+      : shares * 1_000_000;
+
+  if (sharesInUnits === 0) {
+    return null;
+  }
+
+  return freeCashFlow / sharesInUnits;
 }
 
 /**
@@ -174,100 +201,343 @@ function calculateSuperRoic(
   );
 }
 
-function PremiumLineChart({
-  data,
-  formatter = (value) =>
-    formatNumber(value, 1),
-  suffix = "",
-}: {
-  data: ChartPoint[];
-  formatter?: (value: number) => string;
-  suffix?: string;
-}) {
-  const valid = data.filter(
-    (point) =>
-      point.value !== null &&
-      Number.isFinite(point.value)
+function sortHistory(
+  rows: HistoricalFundamental[]
+): HistoricalFundamental[] {
+  return [...rows]
+    .filter((row) => Number.isFinite(row.year))
+    .sort((a, b) => a.year - b.year);
+}
+
+/* -------------------------------------------------------------------------- */
+/* AXES */
+/* -------------------------------------------------------------------------- */
+
+function niceMax(
+  values: Array<number | null>
+): number {
+  const finite = values.filter(
+    (value): value is number =>
+      value !== null && Number.isFinite(value)
   );
 
-  if (valid.length === 0) {
-    return (
-      <div className="flex h-[250px] items-center justify-center text-sm text-[#8d8278]">
-        Données indisponibles
-      </div>
-    );
+  if (finite.length === 0) {
+    return 1;
   }
 
-  const width = 760;
-  const height = 250;
-  const paddingX = 28;
-  const paddingTop = 24;
-  const paddingBottom = 36;
+  const max = Math.max(...finite);
 
-  const values = valid.map(
-    (point) => point.value as number
+  if (max <= 0) {
+    return 1;
+  }
+
+  return max * 1.12;
+}
+
+function niceMin(
+  values: Array<number | null>
+): number {
+  const finite = values.filter(
+    (value): value is number =>
+      value !== null && Number.isFinite(value)
   );
 
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
+  if (finite.length === 0) {
+    return 0;
+  }
+
+  const min = Math.min(...finite);
+
+  if (min >= 0) {
+    return 0;
+  }
+
+  return min * 1.12;
+}
+
+function getXAxisYears(
+  data: Array<{ year: number }>
+): number[] {
+  if (data.length <= 14) {
+    return data.map((item) => item.year);
+  }
+
+  const targetLabels = 14;
+
+  const step = Math.max(
+    1,
+    Math.ceil(
+      (data.length - 1) /
+        (targetLabels - 1)
+    )
+  );
+
+  const years: number[] = [];
+
+  for (
+    let index = 0;
+    index < data.length;
+    index += step
+  ) {
+    years.push(data[index].year);
+  }
+
+  const lastYear =
+    data[data.length - 1]?.year;
+
+  if (
+    lastYear !== undefined &&
+    years[years.length - 1] !== lastYear
+  ) {
+    years.push(lastYear);
+  }
+
+  return years;
+}
+
+/* -------------------------------------------------------------------------- */
+/* TOOLTIP */
+/* -------------------------------------------------------------------------- */
+
+function ChartTooltip({
+  x,
+  y,
+  year,
+  value,
+  formatter,
+}: {
+  x: number;
+  y: number;
+  year: number;
+  value: number;
+  formatter: (value: number | null) => string;
+}) {
+  const tooltipWidth = 280;
+  const tooltipHeight = 120;
+
+  let left = x - tooltipWidth / 2;
+  let top = y - tooltipHeight - 22;
+
+  const maxLeft = 760 - tooltipWidth - 4;
+
+  if (left < 4) {
+    left = 4;
+  }
+
+  if (left > maxLeft) {
+    left = maxLeft;
+  }
+
+  if (top < 4) {
+    top = y + 22;
+  }
+
+  return (
+    <g
+      pointerEvents="none"
+      style={{
+        filter:
+          "drop-shadow(0px 8px 18px rgba(65, 52, 40, 0.20))",
+      }}
+    >
+      <rect
+        x={left}
+        y={top}
+        width={tooltipWidth}
+        height={tooltipHeight}
+        rx="15"
+        fill="#fffdf8"
+        stroke="#d4c9bb"
+        strokeWidth="1.6"
+      />
+
+      <text
+        x={left + tooltipWidth / 2}
+        y={top + 42}
+        textAnchor="middle"
+        fontSize="21"
+        fontWeight="700"
+        fontFamily="Georgia, serif"
+        fill="#75695e"
+      >
+        {year}
+      </text>
+
+      <text
+        x={left + tooltipWidth / 2}
+        y={top + 88}
+        textAnchor="middle"
+        fontSize="32"
+        fontWeight="700"
+        fill="#40372f"
+      >
+        {formatter(value)}
+      </text>
+    </g>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* COURBE */
+/* -------------------------------------------------------------------------- */
+
+function PremiumLineChart({
+  data,
+  valueKey,
+  percent = false,
+  formatter,
+}: {
+  data: Array<{
+    year: number;
+    value: number | null;
+  }>;
+  valueKey: string;
+  percent?: boolean;
+  formatter: (
+    value: number | null
+  ) => string;
+}) {
+  const [hoveredIndex, setHoveredIndex] =
+    useState<number | null>(null);
+
+  const width = 760;
+  const height = 300;
+
+  const paddingLeft = 68;
+  const paddingRight = 22;
+  const paddingTop = 20;
+  const paddingBottom = 42;
+
+  const innerWidth =
+    width -
+    paddingLeft -
+    paddingRight;
+
+  const innerHeight =
+    height -
+    paddingTop -
+    paddingBottom;
+
+  const values = data.map(
+    (item) => item.value
+  );
+
+  const minValue = niceMin(values);
+  const maxValue = niceMax(values);
 
   const range =
     maxValue - minValue === 0
       ? 1
       : maxValue - minValue;
 
-  const points = valid.map(
-    (point, index) => {
+  const points = data
+    .map((item, index) => {
+      if (
+        item.value === null ||
+        !Number.isFinite(item.value)
+      ) {
+        return null;
+      }
+
       const x =
-        valid.length === 1
-          ? width / 2
-          : paddingX +
+        data.length <= 1
+          ? paddingLeft +
+            innerWidth / 2
+          : paddingLeft +
             (index /
-              (valid.length - 1)) *
-              (width - paddingX * 2);
+              (data.length - 1)) *
+              innerWidth;
 
       const y =
         paddingTop +
-        ((maxValue -
-          (point.value as number)) /
+        ((maxValue - item.value) /
           range) *
-          (height -
-            paddingTop -
-            paddingBottom);
+          innerHeight;
 
       return {
         x,
         y,
-        year: point.year,
-        value: point.value as number,
+        year: item.year,
+        value: item.value,
+        index,
       };
-    }
-  );
+    })
+    .filter(
+      (
+        point
+      ): point is {
+        x: number;
+        y: number;
+        year: number;
+        value: number;
+        index: number;
+      } => point !== null
+    );
+
+  if (points.length === 0) {
+    return (
+      <div className="flex h-[300px] items-center justify-center text-sm text-stone-400">
+        Données indisponibles
+      </div>
+    );
+  }
 
   const linePath = points
     .map(
       (point, index) =>
-        `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`
+        `${
+          index === 0 ? "M" : "L"
+        } ${point.x.toFixed(
+          2
+        )} ${point.y.toFixed(2)}`
     )
     .join(" ");
 
-  const areaPath = `
-    ${linePath}
-    L ${points[points.length - 1].x} ${height - paddingBottom}
-    L ${points[0].x} ${height - paddingBottom}
-    Z
-  `;
+  const baselineY =
+    paddingTop + innerHeight;
 
-  const gradientId = `line-gradient-${Math.random()
-    .toString(36)
-    .slice(2)}`;
+  const firstPoint = points[0];
+  const lastPoint =
+    points[points.length - 1];
+
+  const areaPath =
+    `${linePath} ` +
+    `L ${lastPoint.x.toFixed(
+      2
+    )} ${baselineY.toFixed(2)} ` +
+    `L ${firstPoint.x.toFixed(
+      2
+    )} ${baselineY.toFixed(2)} Z`;
+
+  const gradientId = `premium-gradient-${valueKey}`;
+
+  const gridValues = Array.from(
+    { length: 9 },
+    (_, index) => index / 8
+  );
+
+  const hoveredPoint =
+    hoveredIndex === null
+      ? null
+      : points.find(
+          (point) =>
+            point.index ===
+            hoveredIndex
+        ) ?? null;
+
+  const xAxisYears =
+    getXAxisYears(data);
 
   return (
     <div className="w-full">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="h-[250px] w-full overflow-visible"
-        preserveAspectRatio="none"
+        className="h-auto w-full overflow-visible"
+        role="img"
+        aria-label={`Graphique ${valueKey}`}
+        onMouseLeave={() =>
+          setHoveredIndex(null)
+        }
       >
         <defs>
           <linearGradient
@@ -279,35 +549,61 @@ function PremiumLineChart({
           >
             <stop
               offset="0%"
-              stopColor="#4b2f62"
-              stopOpacity="0.28"
+              stopColor="#5b2a72"
+              stopOpacity="0.30"
             />
+
+            <stop
+              offset="65%"
+              stopColor="#7d4b92"
+              stopOpacity="0.12"
+            />
+
             <stop
               offset="100%"
-              stopColor="#4b2f62"
-              stopOpacity="0"
+              stopColor="#c9b2d4"
+              stopOpacity="0.02"
             />
           </linearGradient>
         </defs>
 
-        {[0, 1, 2, 3].map((step) => {
+        {gridValues.map((fraction) => {
           const y =
             paddingTop +
-            (step / 3) *
-              (height -
-                paddingTop -
-                paddingBottom);
+            fraction * innerHeight;
+
+          const value =
+            maxValue -
+            fraction * range;
 
           return (
-            <line
-              key={step}
-              x1={paddingX}
-              x2={width - paddingX}
-              y1={y}
-              y2={y}
-              stroke="#d8d0c5"
-              strokeWidth="1"
-            />
+            <g key={fraction}>
+              <line
+                x1={paddingLeft}
+                x2={
+                  width -
+                  paddingRight
+                }
+                y1={y}
+                y2={y}
+                stroke="#d8d0c4"
+                strokeWidth="1"
+                strokeDasharray="2 5"
+              />
+
+              <text
+                x={paddingLeft - 10}
+                y={y + 7}
+                textAnchor="end"
+                fontSize="20"
+                fontWeight="700"
+                fill="#75695e"
+              >
+                {percent
+                  ? formatPercent(value)
+                  : formatter(value)}
+              </text>
+            </g>
           );
         })}
 
@@ -319,381 +615,564 @@ function PremiumLineChart({
         <path
           d={linePath}
           fill="none"
-          stroke="#4b2f62"
-          strokeWidth="3"
+          stroke="#5b2a72"
+          strokeWidth="2.8"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
 
         {points.map((point) => (
-          <g key={point.year}>
+          <g
+            key={`${point.year}-${point.index}`}
+            onMouseEnter={() =>
+              setHoveredIndex(
+                point.index
+              )
+            }
+          >
             <circle
               cx={point.x}
               cy={point.y}
-              r="4"
-              fill="#4b2f62"
+              r="11"
+              fill="transparent"
             />
 
-            <text
-              x={point.x}
-              y={height - 12}
-              textAnchor="middle"
-              fontSize="12"
-              fill="#766b61"
-            >
-              {point.year}
-            </text>
+            <circle
+              cx={point.x}
+              cy={point.y}
+              r={
+                hoveredIndex ===
+                point.index
+                  ? 4.5
+                  : 3.2
+              }
+              fill="#fdfbf5"
+              stroke="#5b2a72"
+              strokeWidth={
+                hoveredIndex ===
+                point.index
+                  ? 2.2
+                  : 1.8
+              }
+            />
           </g>
         ))}
-      </svg>
 
-      <div className="mt-2 flex justify-between px-2 text-xs text-[#766b61]">
-        <span>
-          {formatter(
-            Math.max(...values)
-          )}
-          {suffix}
-        </span>
-        <span>
-          {formatter(
-            Math.min(...values)
-          )}
-          {suffix}
-        </span>
-      </div>
+        {xAxisYears.map((year) => {
+          const index = data.findIndex(
+            (item) =>
+              item.year === year
+          );
+
+          if (index < 0) {
+            return null;
+          }
+
+          const x =
+            data.length <= 1
+              ? paddingLeft +
+                innerWidth / 2
+              : paddingLeft +
+                (index /
+                  (data.length - 1)) *
+                  innerWidth;
+
+          return (
+            <text
+              key={year}
+              x={x}
+              y={height - 8}
+              textAnchor="middle"
+              fontSize="21"
+              fontWeight="700"
+              fill="#75695e"
+            >
+              {year}
+            </text>
+          );
+        })}
+
+        {hoveredPoint && (
+          <ChartTooltip
+            x={hoveredPoint.x}
+            y={hoveredPoint.y}
+            year={hoveredPoint.year}
+            value={hoveredPoint.value}
+            formatter={formatter}
+          />
+        )}
+      </svg>
     </div>
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* BARRES */
+/* -------------------------------------------------------------------------- */
+
 function PremiumBarChart({
   data,
-  formatter = (value) =>
-    formatNumber(value, 1),
-  suffix = "",
+  formatter,
+  valueKey,
 }: {
-  data: ChartPoint[];
-  formatter?: (value: number) => string;
-  suffix?: string;
+  data: Array<{
+    year: number;
+    value: number | null;
+  }>;
+  formatter: (
+    value: number | null
+  ) => string;
+  valueKey: string;
 }) {
-  const valid = data.filter(
-    (point) =>
-      point.value !== null &&
-      Number.isFinite(point.value)
+  const [hoveredIndex, setHoveredIndex] =
+    useState<number | null>(null);
+
+  const width = 760;
+  const height = 300;
+
+  const paddingLeft = 68;
+  const paddingRight = 22;
+  const paddingTop = 20;
+  const paddingBottom = 42;
+
+  const innerWidth =
+    width -
+    paddingLeft -
+    paddingRight;
+
+  const innerHeight =
+    height -
+    paddingTop -
+    paddingBottom;
+
+  const values = data.map(
+    (item) => item.value
   );
 
-  if (valid.length === 0) {
-    return (
-      <div className="flex h-[250px] items-center justify-center text-sm text-[#8d8278]">
-        Données indisponibles
-      </div>
-    );
-  }
-
-  const values = valid.map(
-    (point) => point.value as number
-  );
-
-  const minValue = Math.min(...values, 0);
-  const maxValue = Math.max(...values, 0);
+  const maxValue = niceMax(values);
+  const minValue = niceMin(values);
 
   const range =
     maxValue - minValue === 0
       ? 1
       : maxValue - minValue;
 
-  const width = 760;
-  const height = 250;
-  const paddingX = 28;
-  const paddingTop = 20;
-  const paddingBottom = 38;
-
-  const chartHeight =
-    height - paddingTop - paddingBottom;
-
   const zeroY =
     paddingTop +
     ((maxValue - 0) / range) *
-      chartHeight;
+      innerHeight;
 
-  const barGap = 12;
+  const slotWidth =
+    data.length > 0
+      ? innerWidth / data.length
+      : innerWidth;
 
-  const availableWidth =
-    width - paddingX * 2;
-
-  const barWidth = Math.max(
-    12,
-    (availableWidth -
-      barGap * (valid.length - 1)) /
-      valid.length
+  const barWidth = Math.min(
+    52,
+    slotWidth * 0.56
   );
+
+  const xAxisYears =
+    getXAxisYears(data);
 
   return (
     <div className="w-full">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="h-[250px] w-full overflow-visible"
-        preserveAspectRatio="none"
+        className="h-auto w-full overflow-visible"
+        role="img"
+        aria-label={`Graphique ${valueKey}`}
+        onMouseLeave={() =>
+          setHoveredIndex(null)
+        }
       >
-        <line
-          x1={paddingX}
-          x2={width - paddingX}
-          y1={zeroY}
-          y2={zeroY}
-          stroke="#c9c0b5"
-          strokeWidth="1.5"
-        />
-
-        {valid.map((point, index) => {
-          const value =
-            point.value as number;
-
-          const x =
-            paddingX +
-            index *
-              (barWidth + barGap);
-
-          const valueY =
-            paddingTop +
-            ((maxValue - value) /
-              range) *
-              chartHeight;
-
+        {Array.from(
+          { length: 9 },
+          (_, index) => index / 8
+        ).map((fraction) => {
           const y =
-            value >= 0
-              ? valueY
-              : zeroY;
+            paddingTop +
+            fraction * innerHeight;
 
-          const barHeight =
-            Math.abs(zeroY - valueY);
+          const value =
+            maxValue -
+            fraction * range;
 
           return (
-            <g key={point.year}>
-              <rect
-                x={x}
-                y={y}
-                width={barWidth}
-                height={Math.max(
-                  1,
-                  barHeight
-                )}
-                rx="5"
-                fill="#4b2f62"
-                opacity="0.9"
+            <g key={fraction}>
+              <line
+                x1={paddingLeft}
+                x2={
+                  width -
+                  paddingRight
+                }
+                y1={y}
+                y2={y}
+                stroke="#d8d0c4"
+                strokeWidth="1"
+                strokeDasharray="2 5"
               />
 
               <text
-                x={
-                  x +
-                  barWidth / 2
-                }
-                y={height - 12}
-                textAnchor="middle"
-                fontSize="12"
-                fill="#766b61"
+                x={paddingLeft - 10}
+                y={y + 7}
+                textAnchor="end"
+                fontSize="20"
+                fontWeight="700"
+                fill="#75695e"
               >
-                {point.year}
+                {formatter(value)}
               </text>
             </g>
           );
         })}
-      </svg>
 
-      <div className="mt-2 flex justify-between px-2 text-xs text-[#766b61]">
-        <span>
-          {formatter(maxValue)}
-          {suffix}
-        </span>
-        <span>
-          {formatter(minValue)}
-          {suffix}
-        </span>
-      </div>
+        {data.map((item, index) => {
+          if (
+            item.value === null ||
+            !Number.isFinite(item.value)
+          ) {
+            return null;
+          }
+
+          const xCenter =
+            paddingLeft +
+            slotWidth * index +
+            slotWidth / 2;
+
+          const valueY =
+            paddingTop +
+            ((maxValue - item.value) /
+              range) *
+              innerHeight;
+
+          const y =
+            item.value >= 0
+              ? valueY
+              : zeroY;
+
+          const h = Math.abs(
+            zeroY - valueY
+          );
+
+          const isHovered =
+            hoveredIndex === index;
+
+          return (
+            <g
+              key={item.year}
+              onMouseEnter={() =>
+                setHoveredIndex(index)
+              }
+            >
+              <rect
+                x={
+                  xCenter -
+                  barWidth / 2
+                }
+                y={y}
+                width={barWidth}
+                height={Math.max(h, 1)}
+                rx="3"
+                fill="#5b2a72"
+                opacity={
+                  isHovered
+                    ? "1"
+                    : "0.82"
+                }
+              />
+
+              {isHovered && (
+                <ChartTooltip
+                  x={xCenter}
+                  y={y}
+                  year={item.year}
+                  value={item.value}
+                  formatter={formatter}
+                />
+              )}
+            </g>
+          );
+        })}
+
+        {xAxisYears.map((year) => {
+          const index = data.findIndex(
+            (item) =>
+              item.year === year
+          );
+
+          if (index < 0) {
+            return null;
+          }
+
+          const xCenter =
+            paddingLeft +
+            slotWidth * index +
+            slotWidth / 2;
+
+          return (
+            <text
+              key={year}
+              x={xCenter}
+              y={height - 8}
+              textAnchor="middle"
+              fontSize="21"
+              fontWeight="700"
+              fill="#75695e"
+            >
+              {year}
+            </text>
+          );
+        })}
+      </svg>
     </div>
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* CASH / DETTES */
+/* -------------------------------------------------------------------------- */
+
 function PremiumCashDebtChart({
   data,
 }: {
-  data: CashDebtPoint[];
+  data: Array<{
+    year: number;
+    cash: number | null;
+    debt: number | null;
+  }>;
 }) {
-  const valid = data.filter(
-    (point) =>
-      (point.cash !== null &&
-        Number.isFinite(point.cash)) ||
-      (point.debt !== null &&
-        Number.isFinite(point.debt))
-  );
-
-  if (valid.length === 0) {
-    return (
-      <div className="flex h-[250px] items-center justify-center text-sm text-[#8d8278]">
-        Données indisponibles
-      </div>
-    );
-  }
-
-  const allValues = valid.flatMap(
-    (point) =>
-      [
-        point.cash,
-        point.debt,
-      ].filter(
-        (value): value is number =>
-          value !== null &&
-          Number.isFinite(value)
-      )
-  );
-
-  const maxValue = Math.max(
-    ...allValues,
-    1
-  );
+  const [hoveredIndex, setHoveredIndex] =
+    useState<number | null>(null);
 
   const width = 760;
-  const height = 250;
-  const paddingX = 28;
+  const height = 300;
+
+  const paddingLeft = 68;
+  const paddingRight = 22;
   const paddingTop = 20;
-  const paddingBottom = 38;
-  const chartHeight =
-    height - paddingTop - paddingBottom;
+  const paddingBottom = 42;
 
-  const groupGap = 18;
+  const innerWidth =
+    width -
+    paddingLeft -
+    paddingRight;
 
-  const availableWidth =
-    width - paddingX * 2;
+  const innerHeight =
+    height -
+    paddingTop -
+    paddingBottom;
 
-  const groupWidth =
-    Math.max(
-      18,
-      (availableWidth -
-        groupGap *
-          (valid.length - 1)) /
-        valid.length
-    );
+  const allValues = [
+    ...data.map((item) => item.cash),
+    ...data.map((item) => item.debt),
+  ];
 
-  const barWidth =
-    Math.max(
-      7,
-      (groupWidth - 6) / 2
-    );
+  const maxValue = niceMax(allValues);
+
+  const slotWidth =
+    data.length > 0
+      ? innerWidth / data.length
+      : innerWidth;
+
+  const groupWidth = Math.min(
+    68,
+    slotWidth * 0.72
+  );
+
+  const barWidth = Math.max(
+    8,
+    (groupWidth - 7) / 2
+  );
+
+  const xAxisYears =
+    getXAxisYears(data);
 
   return (
     <div className="w-full">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="h-[250px] w-full overflow-visible"
-        preserveAspectRatio="none"
+        className="h-auto w-full overflow-visible"
+        role="img"
+        aria-label="Graphique cash et dettes"
+        onMouseLeave={() =>
+          setHoveredIndex(null)
+        }
       >
-        {[0, 1, 2, 3].map(
-          (step) => {
-            const y =
-              paddingTop +
-              (step / 3) *
-                chartHeight;
+        {Array.from(
+          { length: 9 },
+          (_, index) => index / 8
+        ).map((fraction) => {
+          const y =
+            paddingTop +
+            fraction * innerHeight;
 
-            return (
+          const value =
+            maxValue *
+            (1 - fraction);
+
+          return (
+            <g key={fraction}>
               <line
-                key={step}
-                x1={paddingX}
-                x2={width - paddingX}
+                x1={paddingLeft}
+                x2={
+                  width -
+                  paddingRight
+                }
                 y1={y}
                 y2={y}
-                stroke="#d8d0c5"
+                stroke="#d8d0c4"
                 strokeWidth="1"
+                strokeDasharray="2 5"
               />
-            );
-          }
-        )}
 
-        {valid.map(
-          (point, index) => {
-            const groupX =
-              paddingX +
-              index *
-                (groupWidth +
-                  groupGap);
+              <text
+                x={paddingLeft - 10}
+                y={y + 7}
+                textAnchor="end"
+                fontSize="20"
+                fontWeight="700"
+                fill="#75695e"
+              >
+                {formatMillions(value)}
+              </text>
+            </g>
+          );
+        })}
 
-            const cash =
-              point.cash ?? 0;
+        {data.map((item, index) => {
+          const xCenter =
+            paddingLeft +
+            slotWidth * index +
+            slotWidth / 2;
 
-            const debt =
-              point.debt ?? 0;
+          const cashHeight =
+            item.cash === null
+              ? 0
+              : (item.cash / maxValue) *
+                innerHeight;
 
-            const cashHeight =
-              (cash / maxValue) *
-              chartHeight;
+          const debtHeight =
+            item.debt === null
+              ? 0
+              : (item.debt / maxValue) *
+                innerHeight;
 
-            const debtHeight =
-              (debt / maxValue) *
-              chartHeight;
+          const isHovered =
+            hoveredIndex === index;
 
-            const baseY =
-              height -
-              paddingBottom;
+          return (
+            <g
+              key={item.year}
+              onMouseEnter={() =>
+                setHoveredIndex(index)
+              }
+            >
+              <rect
+                x={
+                  xCenter -
+                  groupWidth / 2
+                }
+                y={
+                  paddingTop +
+                  innerHeight -
+                  cashHeight
+                }
+                width={barWidth}
+                height={cashHeight}
+                rx="3"
+                fill="#5b2a72"
+                opacity={
+                  isHovered
+                    ? "1"
+                    : "0.82"
+                }
+              />
 
-            return (
-              <g key={point.year}>
-                <rect
-                  x={groupX}
+              <rect
+                x={xCenter + 3}
+                y={
+                  paddingTop +
+                  innerHeight -
+                  debtHeight
+                }
+                width={barWidth}
+                height={debtHeight}
+                rx="3"
+                fill="#b08a2e"
+                opacity={
+                  isHovered
+                    ? "1"
+                    : "0.86"
+                }
+              />
+
+              {isHovered && (
+                <ChartTooltip
+                  x={xCenter}
                   y={
-                    baseY -
-                    cashHeight
+                    paddingTop +
+                    innerHeight -
+                    Math.max(
+                      cashHeight,
+                      debtHeight
+                    )
                   }
-                  width={barWidth}
-                  height={Math.max(
-                    1,
-                    cashHeight
-                  )}
-                  rx="4"
-                  fill="#4b2f62"
+                  year={item.year}
+                  value={
+                    Math.max(
+                      item.cash ?? 0,
+                      item.debt ?? 0
+                    ) * 1_000_000
+                  }
+                  formatter={
+                    formatMillions
+                  }
                 />
+              )}
+            </g>
+          );
+        })}
 
-                <rect
-                  x={
-                    groupX +
-                    barWidth +
-                    6
-                  }
-                  y={
-                    baseY -
-                    debtHeight
-                  }
-                  width={barWidth}
-                  height={Math.max(
-                    1,
-                    debtHeight
-                  )}
-                  rx="4"
-                  fill="#c7a743"
-                />
+        {xAxisYears.map((year) => {
+          const index = data.findIndex(
+            (item) =>
+              item.year === year
+          );
 
-                <text
-                  x={
-                    groupX +
-                    groupWidth / 2
-                  }
-                  y={height - 12}
-                  textAnchor="middle"
-                  fontSize="12"
-                  fill="#766b61"
-                >
-                  {point.year}
-                </text>
-              </g>
-            );
+          if (index < 0) {
+            return null;
           }
-        )}
+
+          const xCenter =
+            paddingLeft +
+            slotWidth * index +
+            slotWidth / 2;
+
+          return (
+            <text
+              key={year}
+              x={xCenter}
+              y={height - 8}
+              textAnchor="middle"
+              fontSize="21"
+              fontWeight="700"
+              fill="#75695e"
+            >
+              {year}
+            </text>
+          );
+        })}
       </svg>
 
-      <div className="mt-3 flex items-center justify-center gap-5 text-xs text-[#766b61]">
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#4b2f62]" />
-          <span>Cash</span>
+      <div className="mt-1 flex justify-center gap-6 text-[11px] text-stone-500">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm bg-[#5b2a72]" />
+          <span>Trésorerie</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#c7a743]" />
+        <div className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm bg-[#b08a2e]" />
           <span>Dette</span>
         </div>
       </div>
@@ -701,27 +1180,29 @@ function PremiumCashDebtChart({
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* CARTES */
+/* -------------------------------------------------------------------------- */
+
 function GraphCard({
   title,
-  subtitle,
+  description,
   children,
 }: {
   title: string;
-  subtitle?: string;
+  description: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-[28px] border border-[#ddd4c8] bg-[#f8f4eb] p-5 shadow-[0_10px_35px_rgba(75,47,98,0.06)] sm:p-6">
+    <section className="rounded-[22px] border border-[#ded6ca] bg-[#fdfbf5] p-5 shadow-[0_8px_30px_rgba(84,68,48,0.06)] sm:p-6">
       <div className="mb-4">
-        <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-[#40372f]">
+        <h2 className="font-serif text-[17px] font-semibold tracking-[-0.01em] text-[#40372f]">
           {title}
         </h2>
 
-        {subtitle ? (
-          <p className="mt-1 text-xs leading-5 text-[#8d8278]">
-            {subtitle}
-          </p>
-        ) : null}
+        <p className="mt-1 text-[11px] leading-5 text-[#9a8f83]">
+          {description}
+        </p>
       </div>
 
       {children}
@@ -729,7 +1210,11 @@ function GraphCard({
   );
 }
 
-function GraphiquesContent() {
+/* -------------------------------------------------------------------------- */
+/* PAGE */
+/* -------------------------------------------------------------------------- */
+
+export default function GraphiquesPage() {
   const searchParams = useSearchParams();
 
   const companyParam =
@@ -885,203 +1370,252 @@ function GraphiquesContent() {
       className={`${gothicFont.variable} min-h-screen bg-[#f3eee3] px-4 pb-20 text-[#40372f] sm:px-6 lg:px-10`}
     >
       <div className="mx-auto max-w-[1500px]">
-        <header className="pt-10 pb-8 sm:pt-14 sm:pb-10">
-          <div className="flex flex-col gap-3">
-            <h1
-              className="text-5xl leading-none text-[#4b2f62] sm:text-6xl"
-              style={{
-                fontFamily:
-                  "var(--font-graphique)",
-              }}
-            >
-              Graphiques
-            </h1>
 
-            <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium tracking-wide text-[#6f6257]">
-                Historique financier
+        <header className="pb-8 pt-10 sm:pb-10 sm:pt-14">
+
+          <div className="flex items-end justify-between gap-8">
+
+            <div className="flex items-end gap-8">
+
+              <h1
+                className="text-[48px] leading-none tracking-[-0.035em] text-[#40372f] sm:text-[58px]"
+                style={{
+                  fontFamily:
+                    "var(--font-graphique)",
+                }}
+              >
+                Graphiques
+              </h1>
+
+              {!loading &&
+                !error &&
+                history.length > 0 && (
+                  <div className="pb-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#9b8e80]">
+                      Historique financier
+                    </p>
+
+                    <p className="mt-1 font-serif text-sm text-[#6f6358]">
+                      {history[0]?.year} —{" "}
+                      {
+                        history[
+                          history.length - 1
+                        ]?.year
+                      }
+                    </p>
+                  </div>
+                )}
+
+            </div>
+
+            <div className="pb-1 text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#9b8e80]">
+                Entreprise
               </p>
 
-              <p className="text-xs text-[#9a8f84]">
-                {history.length > 0
-                  ? `${history[0].year} — ${
-                      history[
-                        history.length - 1
-                      ].year
-                    }`
-                  : "—"}
+              <p className="mt-1 font-serif text-lg font-semibold text-[#40372f]">
+                {COMPANY_LABELS[company]}
               </p>
             </div>
 
-            <div className="mt-3 inline-flex w-fit rounded-full border border-[#d8cec2] bg-[#eee8dc] px-4 py-2 text-xs font-medium text-[#5d5147]">
-              {company}
-            </div>
           </div>
+
+          <div className="mt-7 h-px bg-[#d9d0c3]" />
+
         </header>
 
-        {loading ? (
-          <div className="rounded-[28px] border border-[#ddd4c8] bg-[#f8f4eb] p-10 text-center text-sm text-[#8d8278]">
-            Chargement des données historiques…
-          </div>
-        ) : error ? (
-          <div className="rounded-[28px] border border-[#dfc8c8] bg-[#f8eeee] p-10 text-center text-sm text-[#8d5f5f]">
-            {error}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 xl:grid-cols-3">
-            <GraphCard
-              title="Croissance du chiffre d'affaires"
-              subtitle="Chiffre d'affaires annuel, en millions d'euros."
-            >
-              <PremiumLineChart
-                data={revenueGrowth}
-                formatter={(value) =>
-                  formatNumber(
-                    value,
-                    0
-                  )
-                }
-                suffix=" M€"
-              />
-            </GraphCard>
+        {loading && (
+          <div className="rounded-[22px] border border-[#ded6ca] bg-[#fdfbf5] px-6 py-16 text-center shadow-[0_8px_30px_rgba(84,68,48,0.05)]">
+            <p className="font-serif text-lg text-[#65594e]">
+              Chargement de l&apos;historique…
+            </p>
 
-            <GraphCard
-              title="Free Cash Flow annuel"
-              subtitle="Free Cash Flow annuel, en millions d'euros."
-            >
-              <PremiumBarChart
-                data={history.map(
-                  (row) => ({
-                    year: row.year,
-                    value:
-                      row.freeCashFlow ===
-                      null
-                        ? null
-                        : row.freeCashFlow /
-                          1_000_000,
-                  })
-                )}
-                formatter={(value) =>
-                  formatNumber(
-                    value,
-                    0
-                  )
-                }
-                suffix=" M€"
-              />
-            </GraphCard>
-
-            <GraphCard
-              title="Free Cash Flow par action"
-              subtitle="Free Cash Flow rapporté au nombre d'actions diluées."
-            >
-              <PremiumLineChart
-                data={fcfPerShare}
-                formatter={(value) =>
-                  formatNumber(
-                    value,
-                    2
-                  )
-                }
-                suffix=" €"
-              />
-            </GraphCard>
-
-            <GraphCard
-              title="Super ROIC"
-              subtitle="(FCF − SBC) / (Total Assets − Goodwill − Current Liabilities), sur les 5 dernières années."
-            >
-              <PremiumLineChart
-                data={superRoic}
-                formatter={(value) =>
-                  formatNumber(
-                    value,
-                    1
-                  )
-                }
-                suffix=" %"
-              />
-            </GraphCard>
-
-            <GraphCard
-              title="Marge brute"
-              subtitle="Résultat brut rapporté au chiffre d'affaires."
-            >
-              <PremiumLineChart
-                data={grossMargin}
-                formatter={(value) =>
-                  formatNumber(
-                    value,
-                    1
-                  )
-                }
-                suffix=" %"
-              />
-            </GraphCard>
-
-            <GraphCard
-              title="Marge du Free Cash Flow"
-              subtitle="Free Cash Flow rapporté au chiffre d'affaires."
-            >
-              <PremiumLineChart
-                data={fcfMargin}
-                formatter={(value) =>
-                  formatNumber(
-                    value,
-                    1
-                  )
-                }
-                suffix=" %"
-              />
-            </GraphCard>
-
-            <GraphCard
-              title="Actions en circulation diluées"
-              subtitle="Nombre moyen d'actions diluées sur l'exercice."
-            >
-              <PremiumLineChart
-                data={history.map(
-                  (row) => ({
-                    year: row.year,
-                    value:
-                      row.dilutedShares,
-                  })
-                )}
-                formatter={(value) =>
-                  formatNumber(
-                    value,
-                    1
-                  )
-                }
-                suffix=" M"
-              />
-            </GraphCard>
-
-            <GraphCard
-              title="Cash & dettes"
-              subtitle="Évolution annuelle du cash et de la dette totale, en millions d'euros."
-            >
-              <PremiumCashDebtChart
-                data={cashDebt}
-              />
-            </GraphCard>
+            <p className="mt-2 text-xs text-[#9a8f83]">
+              Récupération des données
+              financières.
+            </p>
           </div>
         )}
 
-        <footer className="pt-8 text-center text-xs text-[#9a8f84]">
-          Données historiques financières. Les
-          valeurs non disponibles restent
+        {!loading && error && (
+          <div className="rounded-[22px] border border-[#d8c2b8] bg-[#fbf3ed] px-6 py-10 text-center">
+            <p className="font-serif text-lg text-[#704f43]">
+              Impossible de charger les
+              données
+            </p>
+
+            <p className="mt-2 text-xs text-[#9a776b]">
+              {error}
+            </p>
+          </div>
+        )}
+
+        {!loading &&
+          !error &&
+          history.length > 0 && (
+            <>
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+
+                {/* RANGÉE 1 */}
+
+                <GraphCard
+                  title="Croissance du chiffre d'affaires"
+                  description="Évolution annuelle du chiffre d'affaires"
+                >
+                  <PremiumBarChart
+                    data={revenueGrowth}
+                    valueKey="revenue-growth"
+                    formatter={(value) =>
+                      value === null
+                        ? "—"
+                        : `${formatNumber(
+                            value,
+                            0
+                          )} M€`
+                    }
+                  />
+                </GraphCard>
+
+                <GraphCard
+                  title="Free Cash Flow annuel"
+                  description="Flux de trésorerie disponible généré chaque année"
+                >
+                  <PremiumBarChart
+                    data={history.map(
+                      (row) => ({
+                        year: row.year,
+                        value:
+                          row.freeCashFlow ===
+                          null
+                            ? null
+                            : row.freeCashFlow /
+                              1_000_000,
+                      })
+                    )}
+                    valueKey="free-cash-flow"
+                    formatter={(value) =>
+                      value === null
+                        ? "—"
+                        : `${formatNumber(
+                            value,
+                            0
+                          )} M€`
+                    }
+                  />
+                </GraphCard>
+
+                <GraphCard
+                  title="Free Cash Flow par action"
+                  description="Free Cash Flow rapporté au nombre d'actions diluées"
+                >
+                  <PremiumBarChart
+                    data={fcfPerShare}
+                    valueKey="fcf-per-share"
+                    formatter={
+                      formatPerShare
+                    }
+                  />
+                </GraphCard>
+
+                {/* RANGÉE 2 */}
+
+                <GraphCard
+                  title="Super ROIC"
+                  description="(FCF − SBC) / (Total Assets − Goodwill − Current Liabilities)"
+                >
+                  <PremiumLineChart
+                    data={superRoic}
+                    valueKey="super-roic"
+                    percent
+                    formatter={formatPercent}
+                  />
+                </GraphCard>
+
+                <GraphCard
+                  title="Marge brute"
+                  description="Résultat brut rapporté au chiffre d'affaires"
+                >
+                  <PremiumLineChart
+                    data={grossMargin}
+                    valueKey="gross-margin"
+                    percent
+                    formatter={formatPercent}
+                  />
+                </GraphCard>
+
+                <GraphCard
+                  title="Marge du Free Cash Flow"
+                  description="Free Cash Flow rapporté au chiffre d'affaires"
+                >
+                  <PremiumLineChart
+                    data={fcfMargin}
+                    valueKey="fcf-margin"
+                    percent
+                    formatter={formatPercent}
+                  />
+                </GraphCard>
+
+                {/* RANGÉE 3 */}
+
+                <GraphCard
+                  title="Actions en circulation diluées"
+                  description="Évolution du nombre moyen d'actions diluées"
+                >
+                  <PremiumBarChart
+                    data={history.map(
+                      (row) => ({
+                        year: row.year,
+                        value:
+                          row.dilutedShares ===
+                          null
+                            ? null
+                            : row.dilutedShares /
+                              1_000_000,
+                      })
+                    )}
+                    valueKey="diluted-shares"
+                    formatter={(value) =>
+                      value === null
+                        ? "—"
+                        : `${formatNumber(
+                            value,
+                            1
+                          )} M`
+                    }
+                  />
+                </GraphCard>
+
+                <GraphCard
+                  title="Cash & dettes"
+                  description="Évolution de la trésorerie et de la dette totale"
+                >
+                  <PremiumCashDebtChart
+                    data={cashDebt}
+                  />
+                </GraphCard>
+
+              </div>
+            </>
+          )}
+
+        {!loading &&
+          !error &&
+          history.length === 0 && (
+            <div className="rounded-[22px] border border-[#ded6ca] bg-[#fdfbf5] px-6 py-16 text-center">
+              <p className="font-serif text-lg text-[#65594e]">
+                Aucune donnée historique
+                disponible.
+              </p>
+            </div>
+          )}
+
+        <footer className="mt-8 border-t border-[#d9d0c3] pt-5 text-[10px] leading-5 text-[#a0968a]">
+          Données historiques financières.
+          Les valeurs non disponibles restent
           indisponibles.
         </footer>
+
       </div>
     </main>
-  );
-}
-
-export default function GraphiquesPage() {
-  return (
-    <Suspense fallback={null}>
-      <GraphiquesContent />
-    </Suspense>
   );
 }
