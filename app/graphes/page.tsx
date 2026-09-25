@@ -1,7 +1,7 @@
 "use client";
 
 import localFont from "next/font/local";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const gothicFont = localFont({
@@ -1214,7 +1214,7 @@ function GraphCard({
 /* PAGE */
 /* -------------------------------------------------------------------------- */
 
-export default function GraphiquesPage() {
+function GraphiquesContent() {
   const searchParams = useSearchParams();
 
   const companyParam =
@@ -1625,5 +1625,13 @@ export default function GraphiquesPage() {
 
       </div>
     </main>
+  );
+}
+
+export default function GraphiquesPage() {
+  return (
+    <Suspense fallback={null}>
+      <GraphiquesContent />
+    </Suspense>
   );
 }
