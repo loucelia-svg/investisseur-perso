@@ -288,10 +288,10 @@ function ChartTooltip({
   value: number;
   formatter: (value: number | null) => string;
 }) {
-  const tooltipWidth = 280;
-  const tooltipHeight = 120;
+  const tooltipWidth = 220;
+  const tooltipHeight = 96;
   let left = x - tooltipWidth / 2;
-  let top = y - tooltipHeight - 22;
+  let top = y - tooltipHeight - 18;
   const maxLeft = 760 - tooltipWidth - 4;
   if (left < 4) {
     left = 4;
@@ -300,7 +300,7 @@ function ChartTooltip({
     left = maxLeft;
   }
   if (top < 4) {
-    top = y + 22;
+    top = y + 18;
   }
   return (
     <g
@@ -315,16 +315,16 @@ function ChartTooltip({
         y={top}
         width={tooltipWidth}
         height={tooltipHeight}
-        rx="15"
+        rx="13"
         fill="#fffdf8"
         stroke="#d4c9bb"
         strokeWidth="1.6"
       />
       <text
         x={left + tooltipWidth / 2}
-        y={top + 42}
+        y={top + 31}
         textAnchor="middle"
-        fontSize="21"
+        fontSize="19"
         fontWeight="700"
         fontFamily="Georgia, serif"
         fill="#75695e"
@@ -333,9 +333,9 @@ function ChartTooltip({
       </text>
       <text
         x={left + tooltipWidth / 2}
-        y={top + 88}
+        y={top + 72}
         textAnchor="middle"
-        fontSize="32"
+        fontSize="36"
         fontWeight="700"
         fill="#40372f"
       >
@@ -779,18 +779,47 @@ function PremiumBarChart({
                     : "0.82"
                 }
               />
-              {isHovered && (
-                <ChartTooltip
-                  x={xCenter}
-                  y={y}
-                  year={item.year}
-                  value={item.value}
-                  formatter={formatter}
-                />
-              )}
+
             </g>
           );
         })}
+        {hoveredIndex !== null &&
+          (() => {
+            const item = data[hoveredIndex];
+
+            if (
+              !item ||
+              item.value === null ||
+              !Number.isFinite(item.value)
+            ) {
+              return null;
+            }
+
+            const xCenter =
+              paddingLeft +
+              slotWidth * hoveredIndex +
+              slotWidth / 2;
+
+            const valueY =
+              paddingTop +
+              ((maxValue - item.value) / range) *
+                innerHeight;
+
+            const y =
+              item.value >= 0
+                ? valueY
+                : zeroY;
+
+            return (
+              <ChartTooltip
+                x={xCenter}
+                y={y}
+                year={item.year}
+                value={item.value}
+                formatter={formatter}
+              />
+            );
+          })()}
         {xAxisYears.map((year) => {
           const index = data.findIndex(
             (item) =>
@@ -973,32 +1002,57 @@ function PremiumCashDebtChart({
                     : "0.86"
                 }
               />
-              {isHovered && (
-                <ChartTooltip
-                  x={xCenter}
-                  y={
-                    paddingTop +
-                    innerHeight -
-                    Math.max(
-                      cashHeight,
-                      debtHeight
-                    )
-                  }
-                  year={item.year}
-                  value={
-                    Math.max(
-                      item.cash ?? 0,
-                      item.debt ?? 0
-                    ) * 1_000_000
-                  }
-                  formatter={
-                    formatMillions
-                  }
-                />
-              )}
+
             </g>
           );
         })}
+        {hoveredIndex !== null &&
+          (() => {
+            const item = data[hoveredIndex];
+
+            if (!item) {
+              return null;
+            }
+
+            const xCenter =
+              paddingLeft +
+              slotWidth * hoveredIndex +
+              slotWidth / 2;
+
+            const cashHeight =
+              item.cash === null
+                ? 0
+                : (item.cash / maxValue) *
+                  innerHeight;
+
+            const debtHeight =
+              item.debt === null
+                ? 0
+                : (item.debt / maxValue) *
+                  innerHeight;
+
+            return (
+              <ChartTooltip
+                x={xCenter}
+                y={
+                  paddingTop +
+                  innerHeight -
+                  Math.max(
+                    cashHeight,
+                    debtHeight
+                  )
+                }
+                year={item.year}
+                value={
+                  Math.max(
+                    item.cash ?? 0,
+                    item.debt ?? 0
+                  ) * 1_000_000
+                }
+                formatter={formatMillions}
+              />
+            );
+          })()}
         {xAxisYears.map((year) => {
           const index = data.findIndex(
             (item) =>
