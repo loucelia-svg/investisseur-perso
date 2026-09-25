@@ -311,6 +311,34 @@ export default function Home() {
                       }
                     />
 
+                    {/* ========================= */}
+                    {/* DOCUMENTS FINANCIERS */}
+                    {/* ========================= */}
+
+                    <div className="mt-5 flex items-center justify-center gap-5">
+
+                      <Link
+                        href="/graphes"
+                        className="relative inline-block text-sm text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
+                      >
+                        Graphique
+                      </Link>
+
+                      <a
+                        href={
+                          stock.name === "LVMH"
+                            ? "https://stockanalysis.com/quote/epa/MC/financials/income-statement/"
+                            : "https://stockanalysis.com/quote/epa/RMS/financials/income-statement/"
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="relative inline-block text-sm text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
+                      >
+                        Income Statement
+                      </a>
+
+                    </div>
+
                   </div>
 
                   {/* ========================= */}

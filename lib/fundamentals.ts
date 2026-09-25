@@ -928,7 +928,7 @@ async function fetchYahooModule(
   }
 }
 
-async function getYahooHistoricalFundamentals(
+export async function getYahooHistoricalFundamentals(
   symbol: string
 ): Promise<HistoricalFundamental[]> {
   const START_YEAR = 1980;

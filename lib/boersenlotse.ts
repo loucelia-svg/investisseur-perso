@@ -73,7 +73,9 @@ function parseCsvLine(line: string): string[] {
  *
  * Les cellules vides restent null.
  */
-function parseNumber(value: string): number | null {
+function parseNumber(
+  value: string
+): number | null {
   const cleaned = value
     .trim()
     .replace(/^"|"$/g, "");
@@ -84,7 +86,9 @@ function parseNumber(value: string): number | null {
 
   const number = Number(cleaned);
 
-  return Number.isFinite(number) ? number : null;
+  return Number.isFinite(number)
+    ? number
+    : null;
 }
 
 /**
@@ -98,25 +102,37 @@ function parseCsv(csv: string): ParsedCsv {
     .replace(/^\uFEFF/, "")
     .trim()
     .split(/\r?\n/)
-    .filter((line) => line.trim() !== "");
+    .filter(
+      (line) => line.trim() !== ""
+    );
 
   if (lines.length === 0) {
-    throw new Error("CSV Börsenlotse vide.");
+    throw new Error(
+      "CSV Börsenlotse vide."
+    );
   }
 
-  const header = parseCsvLine(lines[0]);
+  const header =
+    parseCsvLine(lines[0]);
 
   const years = header
     .slice(1)
     .map((value) => Number(value))
-    .filter((year) => Number.isFinite(year));
+    .filter((year) =>
+      Number.isFinite(year)
+    );
 
-  const rows = new Map<string, (number | null)[]>();
+  const rows = new Map<
+    string,
+    (number | null)[]
+  >();
 
   for (const line of lines.slice(1)) {
-    const cells = parseCsvLine(line);
+    const cells =
+      parseCsvLine(line);
 
-    const label = cells[0]?.trim();
+    const label =
+      cells[0]?.trim();
 
     if (!label) {
       continue;
@@ -141,12 +157,17 @@ function parseCsv(csv: string): ParsedCsv {
  * Le résultat est mis en cache pendant 24 heures afin d'éviter
  * de télécharger plusieurs fois les mêmes données historiques.
  */
-async function fetchCsv(url: string): Promise<string> {
-  const response = await fetch(url, {
-    next: {
-      revalidate: 86400,
-    },
-  });
+async function fetchCsv(
+  url: string
+): Promise<string> {
+  const response = await fetch(
+    url,
+    {
+      next: {
+        revalidate: 86400,
+      },
+    }
+  );
 
   if (response.status === 429) {
     throw new Error(
@@ -156,7 +177,8 @@ async function fetchCsv(url: string): Promise<string> {
   }
 
   if (!response.ok) {
-    const text = await response.text();
+    const text =
+      await response.text();
 
     throw new Error(
       `Börsenlotse a répondu ${response.status} pour ${url}. ` +
@@ -175,7 +197,9 @@ async function fetchCsv(url: string): Promise<string> {
  * - cash-flow
  * - bilan
  */
-async function fetchCompanyStatements(slug: string) {
+async function fetchCompanyStatements(
+  slug: string
+) {
   const baseUrl =
     `${BOERSENLOTSE_BASE}/${slug}/finanzen`;
 
@@ -188,22 +212,34 @@ async function fetchCompanyStatements(slug: string) {
   const balanceUrl =
     `${baseUrl}?export=csv&statement=balance&zeitraum=alle`;
 
-  const guvCsv = await fetchCsv(guvUrl);
-  const cashflowCsv = await fetchCsv(cashflowUrl);
-  const balanceCsv = await fetchCsv(balanceUrl);
+  const [
+    guvCsv,
+    cashflowCsv,
+    balanceCsv,
+  ] = await Promise.all([
+    fetchCsv(guvUrl),
+    fetchCsv(cashflowUrl),
+    fetchCsv(balanceUrl),
+  ]);
 
   return {
     guv: parseCsv(guvCsv),
-    cashflow: parseCsv(cashflowCsv),
-    balance: parseCsv(balanceCsv),
+    cashflow:
+      parseCsv(cashflowCsv),
+    balance:
+      parseCsv(balanceCsv),
   };
 }
 
 /**
- * Récupère la valeur d'une ligne pour une année donnée.
+ * Récupère la valeur d'une ligne
+ * pour une année donnée.
  */
 function getRowValue(
-  rows: Map<string, (number | null)[]>,
+  rows: Map<
+    string,
+    (number | null)[]
+  >,
   label: string,
   index: number
 ): number | null {
@@ -217,15 +253,19 @@ function getRowValue(
 }
 
 /**
- * Récupère toutes les données historiques d'une société.
+ * Transforme les trois états financiers
+ * Börsenlotse en données historiques
+ * normalisées pour l'application.
  */
-export async function getBoersenlotseHistoricalData(
-  company: keyof typeof COMPANIES
-): Promise<BoersenlotseHistoricalData[]> {
-  const statements =
-    await fetchCompanyStatements(COMPANIES[company]);
-
-  const years = statements.guv.years;
+function buildHistoricalData(
+  statements: {
+    guv: ParsedCsv;
+    cashflow: ParsedCsv;
+    balance: ParsedCsv;
+  }
+): BoersenlotseHistoricalData[] {
+  const years =
+    statements.guv.years;
 
   return years
     .map((year, index) => ({
@@ -244,11 +284,12 @@ export async function getBoersenlotseHistoricalData(
         index
       ),
 
-      operatingIncome: getRowValue(
-        statements.guv.rows,
-        "Operatives Ergebnis",
-        index
-      ),
+      operatingIncome:
+        getRowValue(
+          statements.guv.rows,
+          "Operatives Ergebnis",
+          index
+        ),
 
       netIncome: getRowValue(
         statements.guv.rows,
@@ -269,18 +310,20 @@ export async function getBoersenlotseHistoricalData(
         index
       ),
 
-      stockBasedCompensation: getRowValue(
-        statements.cashflow.rows,
-        "Aktienbasierte Vergütung",
-        index
-      ),
+      stockBasedCompensation:
+        getRowValue(
+          statements.cashflow.rows,
+          "Aktienbasierte Vergütung",
+          index
+        ),
 
       // Actions
-      sharesOutstanding: getRowValue(
-        statements.balance.rows,
-        "Ausstehende Aktien",
-        index
-      ),
+      sharesOutstanding:
+        getRowValue(
+          statements.balance.rows,
+          "Ausstehende Aktien",
+          index
+        ),
 
       // Bilan
       totalAssets: getRowValue(
@@ -295,42 +338,113 @@ export async function getBoersenlotseHistoricalData(
         index
       ),
 
-      currentLiabilities: getRowValue(
-        statements.balance.rows,
-        "Kurzfristige Verbindlichkeiten",
-        index
-      ),
+      currentLiabilities:
+        getRowValue(
+          statements.balance.rows,
+          "Kurzfristige Verbindlichkeiten",
+          index
+        ),
 
-      cashAndShortTermInvestments: getRowValue(
-        statements.balance.rows,
-        "Zahlungsmittel & kurzfristige Anlagen",
-        index
-      ),
+      cashAndShortTermInvestments:
+        getRowValue(
+          statements.balance.rows,
+          "Zahlungsmittel & kurzfristige Anlagen",
+          index
+        ),
 
-      shortTermDebt: getRowValue(
-        statements.balance.rows,
-        "Kurzfristige Finanzschulden",
-        index
-      ),
+      shortTermDebt:
+        getRowValue(
+          statements.balance.rows,
+          "Kurzfristige Finanzschulden",
+          index
+        ),
 
-      longTermDebt: getRowValue(
-        statements.balance.rows,
-        "Langfristige Finanzschulden",
-        index
-      ),
+      longTermDebt:
+        getRowValue(
+          statements.balance.rows,
+          "Langfristige Finanzschulden",
+          index
+        ),
     }))
-    .sort((a, b) => a.year - b.year);
+    .sort(
+      (a, b) =>
+        a.year - b.year
+    );
 }
 
 /**
- * Récupère les données historiques de LVMH et Hermès.
+ * =========================================================
+ * NOUVEAU
+ * =========================================================
+ *
+ * Récupère les données historiques Börsenlotse
+ * directement à partir d'un slug.
+ *
+ * Cette fonction permet d'utiliser Börsenlotse
+ * pour une entreprise recherchée temporairement
+ * sans devoir l'ajouter à COMPANIES.
+ *
+ * Exemple :
+ *
+ * getBoersenlotseHistoricalDataBySlug(
+ *   "..."
+ * );
+ */
+export async function getBoersenlotseHistoricalDataBySlug(
+  slug: string
+): Promise<
+  BoersenlotseHistoricalData[]
+> {
+  const cleanSlug =
+    slug.trim();
+
+  if (!cleanSlug) {
+    throw new Error(
+      "Slug Börsenlotse manquant."
+    );
+  }
+
+  const statements =
+    await fetchCompanyStatements(
+      cleanSlug
+    );
+
+  return buildHistoricalData(
+    statements
+  );
+}
+
+/**
+ * Récupère toutes les données historiques
+ * d'une société enregistrée dans COMPANIES.
+ */
+export async function getBoersenlotseHistoricalData(
+  company: keyof typeof COMPANIES
+): Promise<
+  BoersenlotseHistoricalData[]
+> {
+  return getBoersenlotseHistoricalDataBySlug(
+    COMPANIES[company]
+  );
+}
+
+/**
+ * Récupère les données historiques
+ * de LVMH et Hermès.
+ *
+ * Cette fonction reste inchangée du point
+ * de vue des autres fichiers de l'application.
  */
 export async function getAllBoersenlotseHistoricalData() {
   const LVMH =
-    await getBoersenlotseHistoricalData("LVMH");
+    await getBoersenlotseHistoricalData(
+      "LVMH"
+    );
 
   const Hermes =
-    await getBoersenlotseHistoricalData("Hermès");
+    await getBoersenlotseHistoricalData(
+      "Hermès"
+    );
 
   return {
     LVMH,

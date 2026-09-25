@@ -1,70 +1,87 @@
-export async function GET() {
-  const url =
-    "https://stockanalysis.com/quote/epa/RMS/revenue/";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (compatible; InvestisseurPerso/1.0)",
-      Accept: "text/html",
-    },
-    cache: "no-store",
-  });
+import {
+  debugStockAnalysisBalanceSheet,
+} from "@/lib/financials/stockanalysis";
 
-  if (!response.ok) {
-    return new Response(
-      `Erreur StockAnalysis : ${response.status}`,
-      {
-        status: response.status,
-        headers: {
-          "Content-Type":
-            "text/plain; charset=utf-8",
+export const dynamic = "force-dynamic";
+
+/**
+ * =========================================================
+ * DIAGNOSTIC STOCKANALYSIS — BALANCE SHEET
+ * =========================================================
+ *
+ * Exemple :
+ *
+ * /api/financials/stockanalysis-debug?ticker=AAPL
+ *
+ * Cette route ne modifie aucun calcul de l'application.
+ *
+ * Elle sert uniquement à voir les vraies clés
+ * disponibles dans le bilan StockAnalysis.
+ */
+export async function GET(
+  request: NextRequest
+) {
+  try {
+    const searchParams =
+      request.nextUrl.searchParams;
+
+    const ticker =
+      searchParams
+        .get("ticker")
+        ?.trim()
+        .toUpperCase();
+
+    if (!ticker) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Aucun ticker fourni.",
         },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const balanceSheet =
+      await debugStockAnalysisBalanceSheet(
+        ticker
+      );
+
+    return NextResponse.json({
+      success: true,
+      ticker,
+      balanceSheet,
+    });
+  } catch (error) {
+    console.error(
+      "❌ Erreur diagnostic StockAnalysis :",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
+
+        details:
+          error instanceof Error
+            ? error.stack
+            : undefined,
+      },
+      {
+        status: 500,
       }
     );
   }
-
-  const html = await response.text();
-
-  const terms = [
-    "revenue:[",
-    "fiscalYear:[",
-    "2020",
-    "2020-12-31",
-    "financialData:",
-    "rows:",
-    "columns:",
-  ];
-
-  const results: string[] = [];
-
-  for (const term of terms) {
-    const index = html.indexOf(term);
-
-    if (index === -1) {
-      results.push(
-        `===== ${term} =====\nINTROUVABLE`
-      );
-
-      continue;
-    }
-
-    results.push(
-      `===== ${term} =====\n` +
-        html.slice(
-          Math.max(0, index - 500),
-          index + 2500
-        )
-    );
-  }
-
-  return new Response(
-    results.join("\n\n"),
-    {
-      headers: {
-        "Content-Type":
-          "text/plain; charset=utf-8",
-      },
-    }
-  );
 }

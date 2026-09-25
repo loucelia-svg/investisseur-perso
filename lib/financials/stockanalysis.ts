@@ -1,5 +1,13 @@
-const STOCK_ANALYSIS_BASE =
+const STOCK_ANALYSIS_EPA_BASE =
   "https://stockanalysis.com/quote/epa";
+
+const STOCK_ANALYSIS_US_BASE =
+  "https://stockanalysis.com/stocks";
+
+const EPA_TICKERS = new Set([
+  "MC",
+  "RMS",
+]);
 
 export type StockAnalysisBalanceSheet = {
   period: string;
@@ -13,10 +21,68 @@ export type StockAnalysisAnnualCashFlow = {
   unleveredFreeCashFlow: number | null;
 };
 
+/**
+ * Données historiques du bilan utiles
+ * au calcul du Super ROIC.
+ */
+export type StockAnalysisHistoricalBalanceSheet = {
+  year: number;
+
+  totalAssets: number | null;
+
+  currentLiabilities: number | null;
+
+  goodwill: number | null;
+
+  equity: number | null;
+
+  tangibleBookValue: number | null;
+
+  totalDebt: number | null;
+
+  cashAndShortTermInvestments: number | null;
+};
+
 export type StockAnalysisFinancialData = {
   balanceSheet: StockAnalysisBalanceSheet;
-  annualCashFlow: StockAnalysisAnnualCashFlow;
+
+  annualCashFlow:
+    StockAnalysisAnnualCashFlow;
 };
+
+/**
+ * =========================================================
+ * URL STOCKANALYSIS
+ * =========================================================
+ *
+ * MC / RMS :
+ * /quote/epa/...
+ *
+ * AAPL / MSFT / etc. :
+ * /stocks/...
+ */
+function getStockAnalysisBaseUrl(
+  ticker: string
+): string {
+  const normalizedTicker =
+    ticker.trim().toUpperCase();
+
+  if (
+    EPA_TICKERS.has(
+      normalizedTicker
+    )
+  ) {
+    return (
+      `${STOCK_ANALYSIS_EPA_BASE}/` +
+      normalizedTicker
+    );
+  }
+
+  return (
+    `${STOCK_ANALYSIS_US_BASE}/` +
+    normalizedTicker.toLowerCase()
+  );
+}
 
 async function fetchStockAnalysisPage(
   ticker: string,
@@ -24,17 +90,29 @@ async function fetchStockAnalysisPage(
     | "balance-sheet"
     | "cash-flow-statement"
 ): Promise<string> {
-  const url =
-    `${STOCK_ANALYSIS_BASE}/${ticker}/financials/${page}/`;
+  const companyBaseUrl =
+    getStockAnalysisBaseUrl(
+      ticker
+    );
 
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (compatible; InvestisseurPerso/1.0)",
-      Accept: "text/html",
-    },
-    cache: "no-store",
-  });
+  const url =
+    `${companyBaseUrl}/financials/${page}/`;
+
+  const response =
+    await fetch(
+      url,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (compatible; InvestisseurPerso/1.0)",
+
+          Accept:
+            "text/html",
+        },
+
+        cache: "no-store",
+      }
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -45,15 +123,28 @@ async function fetchStockAnalysisPage(
   return response.text();
 }
 
+/**
+ * =========================================================
+ * EXTRACTION TABLEAUX STOCKANALYSIS
+ * =========================================================
+ */
 function extractArray(
   html: string,
   key: string
 ): string[] | null {
-  const pattern = new RegExp(
-    `${key}:\\[([^\\]]*)\\]`
-  );
+  const escapedKey =
+    key.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
 
-  const match = html.match(pattern);
+  const pattern =
+    new RegExp(
+      `${escapedKey}:\\[([^\\]]*)\\]`
+    );
+
+  const match =
+    html.match(pattern);
 
   if (!match) {
     return null;
@@ -64,13 +155,21 @@ function extractArray(
     .map((value) =>
       value
         .trim()
-        .replace(/^"|"$/g, "")
-        .replace(/^'|'$/g, "")
+        .replace(
+          /^"|"$/g,
+          ""
+        )
+        .replace(
+          /^'|'$/g,
+          ""
+        )
     );
 }
 
 function parseNumber(
-  value: string | undefined
+  value:
+    | string
+    | undefined
 ): number | null {
   if (
     value === undefined ||
@@ -80,30 +179,66 @@ function parseNumber(
     return null;
   }
 
-  const number = Number(value);
+  const number =
+    Number(value);
 
-  return Number.isFinite(number)
+  return Number.isFinite(
+    number
+  )
     ? number
     : null;
 }
 
+function parseYear(
+  value:
+    | string
+    | undefined
+): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const year =
+    Number(value);
+
+  if (
+    !Number.isInteger(
+      year
+    ) ||
+    year < 1900 ||
+    year > 2200
+  ) {
+    return null;
+  }
+
+  return year;
+}
+
+/**
+ * =========================================================
+ * DERNIER BILAN
+ * =========================================================
+ */
 function extractBalanceSheet(
   html: string
 ): StockAnalysisBalanceSheet {
-  const debt = extractArray(
-    html,
-    "debt"
-  );
+  const debt =
+    extractArray(
+      html,
+      "debt"
+    );
 
-  const totalCash = extractArray(
-    html,
-    "totalcash"
-  );
+  const totalCash =
+    extractArray(
+      html,
+      "totalcash"
+    );
 
-  const dateKey = extractArray(
-    html,
-    "datekey"
-  );
+  const dateKey =
+    extractArray(
+      html,
+      "datekey"
+    );
 
   if (!debt) {
     throw new Error(
@@ -118,14 +253,19 @@ function extractBalanceSheet(
   }
 
   const totalDebt =
-    parseNumber(debt[0]);
+    parseNumber(
+      debt[0]
+    );
 
   const cashAndShortTermInvestments =
-    parseNumber(totalCash[0]);
+    parseNumber(
+      totalCash[0]
+    );
 
   const netDebt =
     totalDebt !== null &&
-    cashAndShortTermInvestments !== null
+    cashAndShortTermInvestments !==
+      null
       ? totalDebt -
         cashAndShortTermInvestments
       : null;
@@ -136,24 +276,34 @@ function extractBalanceSheet(
 
   return {
     period,
+
     totalDebt,
+
     cashAndShortTermInvestments,
+
     netDebt,
   };
 }
 
+/**
+ * =========================================================
+ * UFCF ANNUEL
+ * =========================================================
+ */
 function extractAnnualUnleveredFCF(
   html: string
 ): StockAnalysisAnnualCashFlow {
-  const fiscalYear = extractArray(
-    html,
-    "fiscalYear"
-  );
+  const fiscalYear =
+    extractArray(
+      html,
+      "fiscalYear"
+    );
 
-  const unleveredFCF = extractArray(
-    html,
-    "unleveredFCF"
-  );
+  const unleveredFCF =
+    extractArray(
+      html,
+      "unleveredFCF"
+    );
 
   if (!fiscalYear) {
     throw new Error(
@@ -167,64 +317,344 @@ function extractAnnualUnleveredFCF(
     );
   }
 
-  const dateKey = extractArray(
-    html,
-    "datekey"
-  );
+  const dateKey =
+    extractArray(
+      html,
+      "datekey"
+    );
 
   let annualIndex = -1;
 
-  if (dateKey) {
-    for (
-      let i = 0;
-      i < fiscalYear.length;
-      i++
-    ) {
-      const date =
-        dateKey[i] ?? "";
+  /**
+   * On exclut TTM.
+   *
+   * Le premier véritable exercice annuel
+   * disponible est utilisé.
+   */
+  for (
+    let index = 0;
+    index <
+    fiscalYear.length;
+    index++
+  ) {
+    const date =
+      dateKey?.[index];
 
-      if (
-        /^\d{4}-\d{2}-\d{2}$/.test(date)
-      ) {
-        annualIndex = i;
-        break;
-      }
+    if (
+      date &&
+      date !== "TTM" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(
+        date
+      )
+    ) {
+      annualIndex =
+        index;
+
+      break;
     }
   }
 
-  if (annualIndex === -1) {
-    annualIndex = 1;
+  if (
+    annualIndex === -1
+  ) {
+    throw new Error(
+      "StockAnalysis : aucun exercice annuel UFCF trouvé."
+    );
   }
 
-  const yearValue =
-    fiscalYear[annualIndex];
+  const year =
+    parseYear(
+      fiscalYear[
+        annualIndex
+      ]
+    );
 
-  const year = Number(
-    yearValue
-  );
-
-  if (!Number.isFinite(year)) {
+  if (year === null) {
     throw new Error(
       "StockAnalysis : année fiscale invalide."
     );
   }
 
-  const unleveredFreeCashFlow =
-    parseNumber(
-      unleveredFCF[annualIndex]
-    );
-
   return {
     year,
-    unleveredFreeCashFlow,
+
+    unleveredFreeCashFlow:
+      parseNumber(
+        unleveredFCF[
+          annualIndex
+        ]
+      ),
   };
 }
 
+/**
+ * =========================================================
+ * HISTORIQUE BALANCE SHEET
+ * =========================================================
+ *
+ * C'est cette fonction qui va désormais
+ * nous permettre de compléter Yahoo pour
+ * le Super ROIC.
+ *
+ * Elle récupère :
+ *
+ * - Total Assets
+ * - Current Liabilities
+ * - Goodwill
+ * - Equity
+ * - Tangible Book Value
+ * - Total Debt
+ * - Cash + Short-Term Investments
+ *
+ * TTM est volontairement exclu.
+ */
+function extractHistoricalBalanceSheet(
+  html: string
+): StockAnalysisHistoricalBalanceSheet[] {
+  const fiscalYears =
+    extractArray(
+      html,
+      "fiscalYear"
+    );
+
+  const dateKeys =
+    extractArray(
+      html,
+      "datekey"
+    );
+
+  const assets =
+    extractArray(
+      html,
+      "assets"
+    );
+
+  const currentLiabilities =
+    extractArray(
+      html,
+      "currentLiabilities"
+    );
+
+  const goodwill =
+    extractArray(
+      html,
+      "goodwill"
+    );
+
+  const equity =
+    extractArray(
+      html,
+      "equity"
+    );
+
+  const tangibleBookValue =
+    extractArray(
+      html,
+      "tangibleBookValue"
+    );
+
+  const debt =
+    extractArray(
+      html,
+      "debt"
+    );
+
+  const totalCash =
+    extractArray(
+      html,
+      "totalcash"
+    );
+
+  if (!fiscalYears) {
+    throw new Error(
+      "StockAnalysis : fiscalYear introuvable dans le bilan."
+    );
+  }
+
+  if (!dateKeys) {
+    throw new Error(
+      "StockAnalysis : datekey introuvable dans le bilan."
+    );
+  }
+
+  const rows:
+    StockAnalysisHistoricalBalanceSheet[] =
+    [];
+
+  for (
+    let index = 0;
+    index <
+    fiscalYears.length;
+    index++
+  ) {
+    const date =
+      dateKeys[index];
+
+    /**
+     * On ne veut jamais utiliser
+     * la ligne TTM pour le Super ROIC.
+     */
+    if (
+      !date ||
+      date === "TTM"
+    ) {
+      continue;
+    }
+
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(
+        date
+      )
+    ) {
+      continue;
+    }
+
+    const year =
+      parseYear(
+        fiscalYears[
+          index
+        ]
+      );
+
+    if (
+      year === null
+    ) {
+      continue;
+    }
+
+    const rawGoodwill =
+      parseNumber(
+        goodwill?.[
+          index
+        ]
+      );
+
+    const rowEquity =
+      parseNumber(
+        equity?.[
+          index
+        ]
+      );
+
+    const rowTangibleBookValue =
+      parseNumber(
+        tangibleBookValue?.[
+          index
+        ]
+      );
+
+    /**
+     * =====================================================
+     * NORMALISATION GOODWILL
+     * =====================================================
+     *
+     * Cas 1 :
+     * StockAnalysis fournit directement
+     * le Goodwill.
+     *
+     * Exemple :
+     * Microsoft.
+     *
+     * Cas 2 :
+     * Goodwill = null MAIS
+     * Equity === Tangible Book Value.
+     *
+     * Cela nous donne une preuve comptable
+     * suffisante pour normaliser le Goodwill
+     * à zéro pour notre formule.
+     *
+     * Exemple :
+     * Apple 2021-2025.
+     *
+     * Sinon :
+     * on garde null.
+     */
+    let normalizedGoodwill:
+      number | null =
+      rawGoodwill;
+
+    if (
+      normalizedGoodwill ===
+        null &&
+      rowEquity !== null &&
+      rowTangibleBookValue !==
+        null &&
+      Math.abs(
+        rowEquity -
+          rowTangibleBookValue
+      ) < 1
+    ) {
+      normalizedGoodwill =
+        0;
+    }
+
+    rows.push({
+      year,
+
+      totalAssets:
+        parseNumber(
+          assets?.[
+            index
+          ]
+        ),
+
+      currentLiabilities:
+        parseNumber(
+          currentLiabilities?.[
+            index
+          ]
+        ),
+
+      goodwill:
+        normalizedGoodwill,
+
+      equity:
+        rowEquity,
+
+      tangibleBookValue:
+        rowTangibleBookValue,
+
+      totalDebt:
+        parseNumber(
+          debt?.[
+            index
+          ]
+        ),
+
+      cashAndShortTermInvestments:
+        parseNumber(
+          totalCash?.[
+            index
+          ]
+        ),
+    });
+  }
+
+  /**
+   * On trie du plus ancien
+   * au plus récent.
+   */
+  return rows.sort(
+    (a, b) =>
+      a.year - b.year
+  );
+}
+
+/**
+ * =========================================================
+ * API EXISTANTE
+ * =========================================================
+ *
+ * Conservée pour ne pas casser
+ * LVMH / Hermès.
+ */
 export async function getStockAnalysisFinancialData(
   ticker: string
 ): Promise<StockAnalysisFinancialData> {
   const normalizedTicker =
-    ticker.trim().toUpperCase();
+    ticker
+      .trim()
+      .toUpperCase();
 
   if (!normalizedTicker) {
     throw new Error(
@@ -240,6 +670,7 @@ export async function getStockAnalysisFinancialData(
       normalizedTicker,
       "balance-sheet"
     ),
+
     fetchStockAnalysisPage(
       normalizedTicker,
       "cash-flow-statement"
@@ -260,16 +691,69 @@ export async function getStockAnalysisFinancialData(
 }
 
 /**
- * DIAGNOSTIC TEMPORAIRE
+ * =========================================================
+ * NOUVELLE API HISTORIQUE GÉNÉRIQUE
+ * =========================================================
  *
- * Cherche toutes les occurrences de
- * "unleveredFCF" dans la page Cash Flow.
+ * Exemple :
+ *
+ * const history =
+ *   await getStockAnalysisHistoricalBalanceSheet(
+ *     "AAPL"
+ *   );
+ *
+ * Retour :
+ *
+ * [
+ *   {
+ *     year: 2021,
+ *     totalAssets: ...,
+ *     currentLiabilities: ...,
+ *     goodwill: 0,
+ *     ...
+ *   },
+ *   ...
+ * ]
+ */
+export async function getStockAnalysisHistoricalBalanceSheet(
+  ticker: string
+): Promise<
+  StockAnalysisHistoricalBalanceSheet[]
+> {
+  const normalizedTicker =
+    ticker
+      .trim()
+      .toUpperCase();
+
+  if (!normalizedTicker) {
+    throw new Error(
+      "Ticker StockAnalysis vide."
+    );
+  }
+
+  const html =
+    await fetchStockAnalysisPage(
+      normalizedTicker,
+      "balance-sheet"
+    );
+
+  return extractHistoricalBalanceSheet(
+    html
+  );
+}
+
+/**
+ * =========================================================
+ * DIAGNOSTIC — UFCF
+ * =========================================================
  */
 export async function debugStockAnalysisUnleveredFCF(
   ticker: string
 ): Promise<string[]> {
   const normalizedTicker =
-    ticker.trim().toUpperCase();
+    ticker
+      .trim()
+      .toUpperCase();
 
   const html =
     await fetchStockAnalysisPage(
@@ -277,7 +761,8 @@ export async function debugStockAnalysisUnleveredFCF(
       "cash-flow-statement"
     );
 
-  const results: string[] = [];
+  const results:
+    string[] = [];
 
   let startIndex = 0;
 
@@ -288,13 +773,18 @@ export async function debugStockAnalysisUnleveredFCF(
         startIndex
       );
 
-    if (index === -1) {
+    if (
+      index === -1
+    ) {
       break;
     }
 
     results.push(
       html.slice(
-        Math.max(0, index - 1000),
+        Math.max(
+          0,
+          index - 1000
+        ),
         index + 5000
       )
     );
@@ -308,22 +798,22 @@ export async function debugStockAnalysisUnleveredFCF(
 }
 
 /**
- * DIAGNOSTIC TEMPORAIRE
- *
- * Extrait les composants financiers que
- * StockAnalysis expose autour du calcul de l'UFCF.
- *
- * IMPORTANT :
- * Cette fonction ne calcule encore rien.
- * Elle sert uniquement à récupérer les données
- * afin que nous puissions déterminer la formule
- * utilisée par StockAnalysis.
+ * =========================================================
+ * DIAGNOSTIC — COMPOSANTS UFCF
+ * =========================================================
  */
 export async function debugStockAnalysisUfcfComponents(
   ticker: string
-): Promise<Record<string, string[] | null>> {
+): Promise<
+  Record<
+    string,
+    string[] | null
+  >
+> {
   const normalizedTicker =
-    ticker.trim().toUpperCase();
+    ticker
+      .trim()
+      .toUpperCase();
 
   const html =
     await fetchStockAnalysisPage(
@@ -346,7 +836,6 @@ export async function debugStockAnalysisUfcfComponents(
     "netIncomeCF",
     "totalDepAmorCF",
     "otherAmortization",
-
     "debtIssuedLongTerm",
     "debtRepaidLongTerm",
     "netDebtIssued",
@@ -359,7 +848,9 @@ export async function debugStockAnalysisUfcfComponents(
     string[] | null
   > = {};
 
-  for (const key of keys) {
+  for (
+    const key of keys
+  ) {
     result[key] =
       extractArray(
         html,
@@ -371,35 +862,22 @@ export async function debugStockAnalysisUfcfComponents(
 }
 
 /**
- * DIAGNOSTIC TEMPORAIRE
- *
- * Recherche automatiquement les données susceptibles
- * d'intervenir dans le calcul de Levered FCF /
- * Unlevered FCF.
- *
- * Cette version élargit volontairement la recherche
- * aux éléments :
- *
- * - non-cash
- * - rémunération en actions
- * - impôts différés
- * - gains / pertes
- * - dépréciations
- * - actifs / passifs
- * - working capital
- * - leases
- * - intérêts
- * - financement
- * - investissements
- *
- * IMPORTANT :
- * Cette fonction ne calcule encore rien.
+ * =========================================================
+ * DIAGNOSTIC — FORMULE UFCF
+ * =========================================================
  */
 export async function debugStockAnalysisUfcfFormula(
   ticker: string
-): Promise<Record<string, string[] | null>> {
+): Promise<
+  Record<
+    string,
+    string[] | null
+  >
+> {
   const normalizedTicker =
-    ticker.trim().toUpperCase();
+    ticker
+      .trim()
+      .toUpperCase();
 
   const html =
     await fetchStockAnalysisPage(
@@ -407,119 +885,68 @@ export async function debugStockAnalysisUfcfFormula(
       "cash-flow-statement"
     );
 
-  /*
-   * 1. Détection de toutes les clés présentes
-   * dans les tableaux sérialisés de StockAnalysis.
-   */
   const candidateKeys =
     new Set<string>();
 
   const keyPattern =
     /([A-Za-z][A-Za-z0-9]*):\[/g;
 
-  let match: RegExpExecArray | null;
+  let match:
+    | RegExpExecArray
+    | null;
 
   while (
-    (match = keyPattern.exec(html)) !== null
+    (match =
+      keyPattern.exec(
+        html
+      )) !== null
   ) {
-    candidateKeys.add(match[1]);
+    candidateKeys.add(
+      match[1]
+    );
   }
 
-  /*
-   * 2. Mots-clés recherchés.
-   *
-   * On ajoute volontairement plusieurs variantes
-   * pour éviter de dépendre du nom exact choisi
-   * par StockAnalysis.
-   */
   const keywords = [
-    // FCF
     "fcf",
-
-    // Cash-flow
     "cash",
     "flow",
-
-    // Leases
     "lease",
-
-    // Intérêts
     "interest",
-
-    // Fiscalité
     "tax",
-
-    // Résultat
     "income",
-
-    // Opérationnel
     "operating",
-
-    // Working capital
     "working",
     "capital",
     "receiv",
     "invent",
     "payable",
     "accrued",
-
-    // Amortissements / dépréciations
     "depreciation",
     "amort",
     "impair",
-
-    // Non-cash
     "noncash",
-    "nonCash",
-
-    // Gains / pertes
     "gain",
     "loss",
-
-    // Stock-based compensation
     "stock",
     "compensation",
-    "shareBased",
-    "basedComp",
-
-    // Dividendes / rachats
+    "sharebased",
+    "basedcomp",
     "dividend",
     "repurch",
-
-    // Dette
     "debt",
-
-    // Financement
     "financing",
-
-    // Investissements
     "investing",
-
-    // Capitaux propres
     "equity",
-
-    // Intérêts minoritaires
     "minority",
-    "nonControlling",
-
-    // Paiements / encaissements
+    "noncontrolling",
     "payment",
     "proceeds",
-
-    // Actifs / passifs
     "asset",
     "liabil",
-
-    // Différés
     "deferred",
-
-    // Autres éléments
     "other",
   ];
 
-  /*
-   * 3. On conserve les clés pertinentes.
-   */
   const relevantKeys =
     [...candidateKeys]
       .filter((key) => {
@@ -529,21 +956,131 @@ export async function debugStockAnalysisUfcfFormula(
         return keywords.some(
           (keyword) =>
             lower.includes(
-              keyword.toLowerCase()
+              keyword
+                .toLowerCase()
             )
         );
       })
       .sort();
 
-  /*
-   * 4. Extraction des valeurs.
-   */
   const result: Record<
     string,
     string[] | null
   > = {};
 
-  for (const key of relevantKeys) {
+  for (
+    const key of relevantKeys
+  ) {
+    result[key] =
+      extractArray(
+        html,
+        key
+      );
+  }
+
+  return result;
+}
+
+/**
+ * =========================================================
+ * DIAGNOSTIC — BALANCE SHEET
+ * =========================================================
+ */
+export async function debugStockAnalysisBalanceSheet(
+  ticker: string
+): Promise<
+  Record<
+    string,
+    string[] | null
+  >
+> {
+  const normalizedTicker =
+    ticker
+      .trim()
+      .toUpperCase();
+
+  if (!normalizedTicker) {
+    throw new Error(
+      "Ticker StockAnalysis vide."
+    );
+  }
+
+  const html =
+    await fetchStockAnalysisPage(
+      normalizedTicker,
+      "balance-sheet"
+    );
+
+  const candidateKeys =
+    new Set<string>();
+
+  const keyPattern =
+    /([A-Za-z][A-Za-z0-9]*):\[/g;
+
+  let match:
+    | RegExpExecArray
+    | null;
+
+  while (
+    (match =
+      keyPattern.exec(
+        html
+      )) !== null
+  ) {
+    candidateKeys.add(
+      match[1]
+    );
+  }
+
+  const keywords = [
+    "asset",
+    "goodwill",
+    "intangible",
+    "liabil",
+    "cash",
+    "debt",
+    "current",
+    "equity",
+    "book",
+    "tangible",
+  ];
+
+  const relevantKeys =
+    [...candidateKeys]
+      .filter((key) => {
+        const lower =
+          key.toLowerCase();
+
+        return keywords.some(
+          (keyword) =>
+            lower.includes(
+              keyword
+                .toLowerCase()
+            )
+        );
+      })
+      .sort();
+
+  const result: Record<
+    string,
+    string[] | null
+  > = {};
+
+  result.fiscalYear =
+    extractArray(
+      html,
+      "fiscalYear"
+    );
+
+  result.datekey =
+    extractArray(
+      html,
+      "datekey"
+    );
+
+  for (
+    const key of relevantKeys
+  ) {
     result[key] =
       extractArray(
         html,

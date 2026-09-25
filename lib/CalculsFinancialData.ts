@@ -12,18 +12,11 @@ export type AnnualFinancialData = {
    * Free Cash Flow classique.
    *
    * Utilisé pour :
+   * - Dette nette / FCF
+   * - la croissance du FCF
    * - la marge FCF
    */
   freeCashFlow?: number | null;
-
-  /**
-   * Unlevered Free Cash Flow.
-   *
-   * Utilisé pour :
-   * - la croissance de l'UFCF
-   * - Dette nette / Unlevered FCF
-   */
-  unleveredFreeCashFlow?: number | null;
 
   /**
    * Nombre moyen d'actions diluées.
@@ -33,32 +26,24 @@ export type AnnualFinancialData = {
   /**
    * Résultat opérationnel.
    *
-   * Sera utilisé pour les futurs calculs
-   * de rendement du capital.
+   * Conservé pour les autres calculs
+   * financiers de l'application.
    */
   operatingIncome?: number | null;
 
   /**
    * Charge d'impôt.
-   *
-   * Utilisée avec le résultat avant impôt
-   * pour déterminer le taux d'imposition effectif.
    */
   taxProvision?: number | null;
 
   /**
    * Résultat avant impôt.
-   *
-   * Utilisé avec la charge d'impôt
-   * pour déterminer le taux d'imposition effectif.
    */
   pretaxIncome?: number | null;
 
   /**
-   * Capitaux propres attribuables aux actionnaires.
-   *
-   * Sera utilisé pour les futurs calculs
-   * de rendement du capital.
+   * Capitaux propres attribuables
+   * aux actionnaires.
    */
   stockholdersEquity?: number | null;
 
@@ -82,9 +67,9 @@ export type AnnualFinancialData = {
 /**
  * Données nécessaires au critère :
  *
- * Dette nette / Unlevered FCF
+ * Dette nette / Free Cash Flow
  */
-export type NetDebtToUnleveredFCFData = {
+export type NetDebtToFCFData = {
   /**
    * Dette nette du dernier bilan disponible.
    *
@@ -93,44 +78,45 @@ export type NetDebtToUnleveredFCFData = {
   netDebt: number | null;
 
   /**
-   * Unlevered Free Cash Flow annuel.
+   * Free Cash Flow annuel utilisé
+   * pour le ratio.
    */
-  unleveredFreeCashFlow: number | null;
+  freeCashFlow: number | null;
 
   /**
-   * Année de l'Unlevered FCF utilisé.
+   * Année du FCF utilisé.
    */
-  unleveredFreeCashFlowYear?: number | null;
+  freeCashFlowYear?: number | null;
 };
 
 export type FinancialCriteriaResult = {
   /**
    * Critère 1 :
-   * CAGR du chiffre d'affaires 2020 → 2025.
+   * CAGR du chiffre d'affaires.
    */
   revenueGrowthCagr: number | null;
 
   /**
    * Critère 2 :
-   * Dette nette / Unlevered FCF.
+   * Dette nette / Free Cash Flow.
    */
-  netDebtToUnleveredFCF: number | null;
+  netDebtToFCF: number | null;
 
   /**
    * Critère 3 :
-   * CAGR de l'Unlevered FCF 2020 → 2025.
+   * CAGR du Free Cash Flow.
    */
   freeCashFlowGrowthCagr: number | null;
 
   /**
    * Critère 4 :
-   * évolution des actions diluées 2020 → 2025.
+   * évolution du nombre d'actions diluées.
    */
   dilutedSharesChange: number | null;
 
   /**
    * Critère 6 :
-   * moyenne des marges FCF 2020 → 2025.
+   * moyenne des marges FCF.
    */
   averageFcfMargin: number | null;
 };
@@ -152,9 +138,9 @@ function getYearData(
  * 1. CROISSANCE DU CHIFFRE D'AFFAIRES
  * ============================================================
  *
- * CAGR 2020 → 2025
+ * CAGR :
  *
- * (CA2025 / CA2020) ^ (1 / 5) - 1
+ * (CA fin / CA début) ^ (1 / nombre d'années) - 1
  */
 export function calculateRevenueGrowthCagr(
   data: AnnualFinancialData[],
@@ -162,10 +148,16 @@ export function calculateRevenueGrowthCagr(
   endYear = 2025
 ): number | null {
   const start =
-    getYearData(data, startYear)?.revenue;
+    getYearData(
+      data,
+      startYear
+    )?.revenue;
 
   const end =
-    getYearData(data, endYear)?.revenue;
+    getYearData(
+      data,
+      endYear
+    )?.revenue;
 
   if (
     start == null ||
@@ -181,49 +173,60 @@ export function calculateRevenueGrowthCagr(
     endYear - startYear;
 
   return (
-    (Math.pow(
-      end / start,
-      1 / years
-    ) - 1) *
+    (
+      Math.pow(
+        end / start,
+        1 / years
+      ) - 1
+    ) *
     100
   );
 }
 
 /**
  * ============================================================
- * 2. DETTE NETTE / UNLEVERED FCF
+ * 2. DETTE NETTE / FREE CASH FLOW
  * ============================================================
+ *
+ * Dette nette :
+ *
+ * Dette totale
+ * - Cash & Short-Term Investments
+ *
+ * Puis :
+ *
+ * Dette nette / FCF
  */
-export function calculateNetDebtToUnleveredFCF(
-  data: NetDebtToUnleveredFCFData
+export function calculateNetDebtToFCF(
+  data: NetDebtToFCFData
 ): number | null {
   const {
     netDebt,
-    unleveredFreeCashFlow,
+    freeCashFlow,
   } = data;
 
   if (
     netDebt == null ||
-    unleveredFreeCashFlow == null ||
-    unleveredFreeCashFlow === 0
+    freeCashFlow == null ||
+    freeCashFlow === 0
   ) {
     return null;
   }
 
   return (
     netDebt /
-    unleveredFreeCashFlow
+    freeCashFlow
   );
 }
 
 /**
  * ============================================================
- * 3. CROISSANCE DE L'UNLEVERED FCF
+ * 3. CROISSANCE DU FREE CASH FLOW
  * ============================================================
  *
- * CAGR 2020 → 2025
+ * CAGR :
  *
- * (UFCF2025 / UFCF2020) ^ (1 / 5) - 1
+ * (FCF fin / FCF début) ^ (1 / nombre d'années) - 1
  */
 export function calculateFreeCashFlowGrowthCagr(
   data: AnnualFinancialData[],
@@ -234,13 +237,13 @@ export function calculateFreeCashFlowGrowthCagr(
     getYearData(
       data,
       startYear
-    )?.unleveredFreeCashFlow;
+    )?.freeCashFlow;
 
   const end =
     getYearData(
       data,
       endYear
-    )?.unleveredFreeCashFlow;
+    )?.freeCashFlow;
 
   if (
     start == null ||
@@ -256,10 +259,12 @@ export function calculateFreeCashFlowGrowthCagr(
     endYear - startYear;
 
   return (
-    (Math.pow(
-      end / start,
-      1 / years
-    ) - 1) *
+    (
+      Math.pow(
+        end / start,
+        1 / years
+      ) - 1
+    ) *
     100
   );
 }
@@ -269,7 +274,7 @@ export function calculateFreeCashFlowGrowthCagr(
  * 4. ACTIONS DILUÉES
  * ============================================================
  *
- * (Actions2025 / Actions2020) - 1
+ * (Actions fin / Actions début) - 1
  */
 export function calculateDilutedSharesChange(
   data: AnnualFinancialData[],
@@ -298,7 +303,10 @@ export function calculateDilutedSharesChange(
   }
 
   return (
-    (end / start - 1) *
+    (
+      end / start -
+      1
+    ) *
     100
   );
 }
@@ -312,7 +320,7 @@ export function calculateDilutedSharesChange(
  *
  * FCF / CA × 100
  *
- * Puis moyenne 2020 → 2025.
+ * Puis moyenne sur la période.
  */
 export function calculateAverageFreeCashFlowMargin(
   data: AnnualFinancialData[],
@@ -341,11 +349,15 @@ export function calculateAverageFreeCashFlowMargin(
     }
 
     const margin =
-      (row.freeCashFlow /
-        row.revenue) *
+      (
+        row.freeCashFlow /
+        row.revenue
+      ) *
       100;
 
-    margins.push(margin);
+    margins.push(
+      margin
+    );
   }
 
   if (
@@ -356,10 +368,14 @@ export function calculateAverageFreeCashFlowMargin(
 
   return (
     margins.reduce(
-      (sum, margin) =>
+      (
+        sum,
+        margin
+      ) =>
         sum + margin,
       0
-    ) / margins.length
+    ) /
+    margins.length
   );
 }
 
@@ -370,34 +386,44 @@ export function calculateAverageFreeCashFlowMargin(
  */
 export function calculateFinancialCriteria(
   data: AnnualFinancialData[],
-  netDebtToUnleveredFCFData?: NetDebtToUnleveredFCFData
+  netDebtToFCFData?: NetDebtToFCFData,
+  startYear = 2020,
+  endYear = 2025
 ): FinancialCriteriaResult {
   return {
     revenueGrowthCagr:
       calculateRevenueGrowthCagr(
-        data
+        data,
+        startYear,
+        endYear
       ),
 
-    netDebtToUnleveredFCF:
-      netDebtToUnleveredFCFData
-        ? calculateNetDebtToUnleveredFCF(
-            netDebtToUnleveredFCFData
+    netDebtToFCF:
+      netDebtToFCFData
+        ? calculateNetDebtToFCF(
+            netDebtToFCFData
           )
         : null,
 
     freeCashFlowGrowthCagr:
       calculateFreeCashFlowGrowthCagr(
-        data
+        data,
+        startYear,
+        endYear
       ),
 
     dilutedSharesChange:
       calculateDilutedSharesChange(
-        data
+        data,
+        startYear,
+        endYear
       ),
 
     averageFcfMargin:
       calculateAverageFreeCashFlowMargin(
-        data
+        data,
+        startYear,
+        endYear
       ),
   };
 }
