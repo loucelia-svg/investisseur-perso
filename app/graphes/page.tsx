@@ -2625,9 +2625,7 @@ function GraphiquesContent() {
 
           Number.isFinite(row.value)
 
-      )
-
-      .slice(-5);
+      );
 
   }, [history]);
 
