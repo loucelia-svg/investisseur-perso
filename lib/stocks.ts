@@ -1,23 +1,26 @@
-export const stocks = [
+export type Stock = {
+  name: "LVMH" | "Hermès";
+  isin: string;
+  price: number | null;
+  alerts: number[];
+  tradingDateTime: string | undefined;
+  tradingViewSymbol: string;
+};
+export const stocks: Stock[] = [
   {
     name: "LVMH",
     isin: "FR0000121014",
-    price: 409.20,
-    status: "Zone d'observation",
-    statusColor: "bg-yellow-100 text-yellow-800",
+    price: null,
     alerts: [390, 370],
-    tradingDateTime: undefined as string | undefined,
+    tradingDateTime: undefined,
     tradingViewSymbol: "EURONEXT:MC",
   },
-
   {
     name: "Hermès",
     isin: "FR0000052292",
-    price: 1414,
-    status: "À surveiller",
-    statusColor: "bg-orange-100 text-orange-800",
+    price: null,
     alerts: [1250],
-    tradingDateTime: undefined as string | undefined,
+    tradingDateTime: undefined,
     tradingViewSymbol: "EURONEXT:RMS",
   },
 ];
