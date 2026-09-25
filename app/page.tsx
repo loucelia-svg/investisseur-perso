@@ -500,15 +500,12 @@ export default function Home() {
         {/* RECHERCHE ENTREPRISE */}
         {/* ========================= */}
         <div className="mt-10 text-center">
-          <button
-            type="button"
-            onClick={
-              toggleCompanySearch
-            }
-            className="relative inline-block text-sm text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
-          >
-            Rechercher une entreprise
-          </button>
+           <Link
+             href="/recherche"
+              className="relative inline-block text-sm text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
+                >
+                Rechercher une entreprise
+              </Link>
           {companySearchOpen && (
             <div className="mx-auto mt-5 max-w-xl text-left">
               <form

@@ -2,78 +2,60 @@ import {
   NextRequest,
   NextResponse,
 } from "next/server";
-
 import YahooFinance from "yahoo-finance2";
-
 import {
-  getYahooHistoricalFundamentals,
+  getHistoricalFundamentalsForSymbol,
 } from "@/lib/fundamentals";
-
 import {
   getStockAnalysisHistoricalBalanceSheet,
   type StockAnalysisHistoricalBalanceSheet,
 } from "@/lib/financials/stockanalysis";
-
 import {
   calculateFinancialCriteria,
   type AnnualFinancialData,
 } from "@/lib/CalculsFinancialData";
-
 export const dynamic = "force-dynamic";
-
 const yahooFinance =
   new YahooFinance();
-
 /* =========================================================
    TYPES
    ========================================================= */
-
 type QuarterlyBalanceSheetRow = {
   date?: Date | string | number | null;
-
   totalDebt?: number | null;
-
   cashAndCashEquivalents?:
     | number
     | null;
-
   cashCashEquivalentsAndShortTermInvestments?:
     | number
     | null;
 };
-
 type SuperRoicYear = {
   year: number;
   value: number | null;
 };
-
 type SuperRoicResult = {
   average: number | null;
   yearly: SuperRoicYear[];
   completeYears: number;
 };
-
 type YahooHistoricalData =
   Awaited<
     ReturnType<
-      typeof getYahooHistoricalFundamentals
+      typeof getHistoricalFundamentalsForSymbol
     >
   >;
-
 type YahooHistoricalRow =
   YahooHistoricalData[number];
-
 type MergedHistoricalRow =
   YahooHistoricalRow & {
     totalAssets: number | null;
     goodwill: number | null;
     currentLiabilities: number | null;
   };
-
 /* =========================================================
    HELPERS
    ========================================================= */
-
 function toNumber(
   value: unknown
 ): number | null {
@@ -83,10 +65,8 @@ function toNumber(
   ) {
     return value;
   }
-
   return null;
 }
-
 /**
  * Transforme le symbole Yahoo en ticker
  * exploitable par notre scraper StockAnalysis.
@@ -105,7 +85,6 @@ function getStockAnalysisTicker(
     symbol
       .trim()
       .toUpperCase();
-
   if (
     normalized.endsWith(
       ".PA"
@@ -116,10 +95,8 @@ function getStockAnalysisTicker(
       -3
     );
   }
-
   return normalized;
 }
-
 /**
  * =========================================================
  * STOCKANALYSIS — HISTORIQUE
@@ -140,7 +117,6 @@ async function getStockAnalysisHistorySafe(
       getStockAnalysisTicker(
         symbol
       );
-
     return await getStockAnalysisHistoricalBalanceSheet(
       ticker
     );
@@ -149,11 +125,9 @@ async function getStockAnalysisHistorySafe(
       `⚠️ StockAnalysis historique indisponible pour ${symbol}:`,
       error
     );
-
     return [];
   }
 }
-
 /**
  * =========================================================
  * FUSION YAHOO + STOCKANALYSIS
@@ -184,7 +158,6 @@ function mergeHistoricalSources(
       number,
       StockAnalysisHistoricalBalanceSheet
     >();
-
   for (
     const row of stockAnalysisRows
   ) {
@@ -193,7 +166,6 @@ function mergeHistoricalSources(
       row
     );
   }
-
   return yahooRows.map(
     (
       yahooRow
@@ -202,22 +174,18 @@ function mergeHistoricalSources(
         stockAnalysisByYear.get(
           yahooRow.year
         );
-
       return {
         ...yahooRow,
-
         totalAssets:
           yahooRow.totalAssets ??
           stockAnalysisRow
             ?.totalAssets ??
           null,
-
         goodwill:
           yahooRow.goodwill ??
           stockAnalysisRow
             ?.goodwill ??
           null,
-
         currentLiabilities:
           yahooRow.currentLiabilities ??
           stockAnalysisRow
@@ -227,7 +195,6 @@ function mergeHistoricalSources(
     }
   );
 }
-
 /**
  * =========================================================
  * SUPER ROIC
@@ -262,7 +229,6 @@ function calculateSuperRoicForYear(
     goodwill,
     currentLiabilities,
   } = row;
-
   if (
     freeCashFlow == null ||
     stockBasedCompensation ==
@@ -273,16 +239,13 @@ function calculateSuperRoicForYear(
   ) {
     return null;
   }
-
   const numerator =
     freeCashFlow -
     stockBasedCompensation;
-
   const denominator =
     totalAssets -
     goodwill -
     currentLiabilities;
-
   if (
     denominator <= 0 ||
     !Number.isFinite(
@@ -291,20 +254,17 @@ function calculateSuperRoicForYear(
   ) {
     return null;
   }
-
   const result =
     (
       numerator /
       denominator
     ) * 100;
-
   return Number.isFinite(
     result
   )
     ? result
     : null;
 }
-
 function calculateFiveYearSuperRoic(
   annual:
     MergedHistoricalRow[],
@@ -319,10 +279,8 @@ function calculateFiveYearSuperRoic(
               item.year ===
               year
           );
-
         return {
           year,
-
           value: row
             ? calculateSuperRoicForYear(
                 row
@@ -331,7 +289,6 @@ function calculateFiveYearSuperRoic(
         };
       }
     );
-
   const validValues =
     yearly
       .map(
@@ -344,7 +301,6 @@ function calculateFiveYearSuperRoic(
         ): value is number =>
           value !== null
       );
-
   /**
    * Le Super ROIC moyen n'est affiché
    * que si les 5 exercices demandés
@@ -361,7 +317,6 @@ function calculateFiveYearSuperRoic(
         validValues.length,
     };
   }
-
   const average =
     validValues.reduce(
       (
@@ -372,7 +327,6 @@ function calculateFiveYearSuperRoic(
       0
     ) /
     validValues.length;
-
   return {
     average,
     yearly,
@@ -380,7 +334,6 @@ function calculateFiveYearSuperRoic(
       validValues.length,
   };
 }
-
 /**
  * =========================================================
  * DERNIER BILAN TRIMESTRIEL
@@ -407,7 +360,6 @@ async function getLatestQuarterlyNetDebt(
     const currentYear =
       new Date()
         .getUTCFullYear();
-
     const rows =
       await yahooFinance
         .fundamentalsTimeSeries(
@@ -415,18 +367,14 @@ async function getLatestQuarterlyNetDebt(
           {
             period1:
               `${currentYear - 2}-01-01`,
-
             period2:
               `${currentYear + 1}-01-01`,
-
             type:
               "quarterly",
-
             module:
               "balance-sheet",
           }
         );
-
     if (
       !Array.isArray(
         rows
@@ -440,7 +388,6 @@ async function getLatestQuarterlyNetDebt(
           null,
       };
     }
-
     const sorted =
       (
         rows as
@@ -458,21 +405,18 @@ async function getLatestQuarterlyNetDebt(
                     a.date
                   ).getTime()
                 : 0;
-
             const dateB =
               b.date
                 ? new Date(
                     b.date
                   ).getTime()
                 : 0;
-
             return (
               dateB -
               dateA
             );
           }
         );
-
     for (
       const row of sorted
     ) {
@@ -480,7 +424,6 @@ async function getLatestQuarterlyNetDebt(
         toNumber(
           row.totalDebt
         );
-
       const cashAndShortTermInvestments =
         toNumber(
           row
@@ -490,7 +433,6 @@ async function getLatestQuarterlyNetDebt(
           row
             .cashAndCashEquivalents
         );
-
       if (
         totalDebt !== null &&
         cashAndShortTermInvestments !==
@@ -498,16 +440,13 @@ async function getLatestQuarterlyNetDebt(
       ) {
         return {
           totalDebt,
-
           cashAndShortTermInvestments,
-
           netDebt:
             totalDebt -
             cashAndShortTermInvestments,
         };
       }
     }
-
     return {
       netDebt: null,
       totalDebt: null,
@@ -519,7 +458,6 @@ async function getLatestQuarterlyNetDebt(
       `⚠️ Impossible de récupérer le bilan trimestriel Yahoo pour ${symbol}:`,
       error
     );
-
     return {
       netDebt: null,
       totalDebt: null,
@@ -528,11 +466,9 @@ async function getLatestQuarterlyNetDebt(
     };
   }
 }
-
 /* =========================================================
    ROUTE
    ========================================================= */
-
 export async function GET(
   request: NextRequest
 ) {
@@ -540,18 +476,15 @@ export async function GET(
     const searchParams =
       request.nextUrl
         .searchParams;
-
     const symbol =
       searchParams
         .get("symbol")
         ?.trim()
         .toUpperCase();
-
     if (!symbol) {
       return NextResponse.json(
         {
           success: false,
-
           error:
             "Aucun symbole boursier fourni.",
         },
@@ -560,30 +493,25 @@ export async function GET(
         }
       );
     }
-
     /* =====================================================
        RÉCUPÉRATION DES DONNÉES
        ===================================================== */
-
     const [
       yahooHistorical,
       stockAnalysisHistorical,
       latestQuarterlyBalanceSheet,
     ] =
       await Promise.all([
-        getYahooHistoricalFundamentals(
+        getHistoricalFundamentalsForSymbol(
           symbol
         ),
-
         getStockAnalysisHistorySafe(
           symbol
         ),
-
         getLatestQuarterlyNetDebt(
           symbol
         ),
       ]);
-
     if (
       yahooHistorical.length ===
       0
@@ -591,12 +519,9 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-
           symbol,
-
           error:
             "Aucune donnée financière trouvée pour cette entreprise.",
-
           annual: [],
         },
         {
@@ -604,21 +529,17 @@ export async function GET(
         }
       );
     }
-
     /* =====================================================
        FUSION YAHOO + STOCKANALYSIS
        ===================================================== */
-
     const historical =
       mergeHistoricalSources(
         yahooHistorical,
         stockAnalysisHistorical
       );
-
     /* =====================================================
        ANNÉES DISPONIBLES
        ===================================================== */
-
     const annual =
       historical
         .slice()
@@ -630,7 +551,6 @@ export async function GET(
             a.year -
             b.year
         );
-
     /**
      * On prend les 5 exercices annuels
      * les plus récents réellement disponibles.
@@ -640,7 +560,6 @@ export async function GET(
      */
     const latestFiveAnnual =
       annual.slice(-5);
-
     if (
       latestFiveAnnual.length ===
       0
@@ -648,12 +567,9 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-
           symbol,
-
           error:
             "Aucune année financière exploitable.",
-
           annual: [],
         },
         {
@@ -661,59 +577,46 @@ export async function GET(
         }
       );
     }
-
     const startYear =
       latestFiveAnnual[0]
         .year;
-
     const endYear =
       latestFiveAnnual[
         latestFiveAnnual.length -
           1
       ].year;
-
     const years =
       latestFiveAnnual.map(
         (row) =>
           row.year
       );
-
     /* =====================================================
        NORMALISATION POUR LE MOTEUR CENTRAL
        ===================================================== */
-
     const calculationData:
       AnnualFinancialData[] =
       latestFiveAnnual.map(
         (row) => ({
           year:
             row.year,
-
           revenue:
             row.revenue,
-
           freeCashFlow:
             row.freeCashFlow,
-
           dilutedAverageShares:
             row.dilutedShares,
-
           operatingIncome:
             row.operatingIncome,
-
           totalDebt:
             row.totalDebt,
-
           cashAndShortTermInvestments:
             row
               .cashAndShortTermInvestments,
         })
       );
-
     /* =====================================================
        DERNIER FCF
        ===================================================== */
-
     const latestAnnualWithFcf =
       [...latestFiveAnnual]
         .reverse()
@@ -722,130 +625,106 @@ export async function GET(
             row.freeCashFlow !==
             null
         );
-
     const latestFreeCashFlow =
       latestAnnualWithFcf
         ?.freeCashFlow ??
       null;
-
     const latestFreeCashFlowYear =
       latestAnnualWithFcf
         ?.year ??
       null;
-
     /* =====================================================
        CRITÈRES 1, 2, 3, 4 ET 6
        ===================================================== */
-
     const calculatedCriteria =
       calculateFinancialCriteria(
         calculationData,
-
         {
           netDebt:
             latestQuarterlyBalanceSheet
               .netDebt,
-
           freeCashFlow:
             latestFreeCashFlow,
-
           freeCashFlowYear:
             latestFreeCashFlowYear,
         },
-
         startYear,
-
         endYear
       );
-
     /* =====================================================
        CRITÈRE 5 — SUPER ROIC
        ===================================================== */
-
     const superRoic =
       calculateFiveYearSuperRoic(
         latestFiveAnnual,
         years
       );
-
     /* =====================================================
        RÉPONSE
        ===================================================== */
-
     return NextResponse.json({
       success: true,
-
       symbol,
-
       period: {
         startYear,
         endYear,
         years,
       },
-
-      annual:
-        latestFiveAnnual,
-
+      annual,
       latestQuarterlyBalanceSheet:
         {
           totalDebt:
             latestQuarterlyBalanceSheet
               .totalDebt,
-
           cashAndShortTermInvestments:
             latestQuarterlyBalanceSheet
               .cashAndShortTermInvestments,
-
           netDebt:
             latestQuarterlyBalanceSheet
               .netDebt,
         },
-
       latestFreeCashFlow: {
         year:
           latestFreeCashFlowYear,
-
         value:
           latestFreeCashFlow,
       },
-
       criteria: {
         revenueGrowthCagr:
           calculatedCriteria
             .revenueGrowthCagr,
-
         netDebtToFCF:
           calculatedCriteria
             .netDebtToFCF,
-
         freeCashFlowGrowthCagr:
           calculatedCriteria
             .freeCashFlowGrowthCagr,
-
         dilutedSharesChange:
           calculatedCriteria
             .dilutedSharesChange,
-
         superRoic:
           superRoic.average,
-
         averageFcfMargin:
           calculatedCriteria
             .averageFcfMargin,
       },
-
       superRoicDetails: {
         yearly:
           superRoic.yearly,
-
         completeYears:
           superRoic
             .completeYears,
-
         requiredYears:
           years.length,
       },
-
+      historicalSuperRoic:
+        annual.map((row) => ({
+          year: row.year,
+          value:
+            calculateSuperRoicForYear(
+              row
+            ),
+        })),
       /**
        * Diagnostic temporaire.
        *
@@ -857,9 +736,12 @@ export async function GET(
        * le moteur validé.
        */
       sources: {
+        historicalEngine:
+          "Börsenlotse + Yahoo",
         yahoo:
           true,
-
+        boersenlotse:
+          true,
         stockAnalysis:
           stockAnalysisHistorical
             .length > 0,
@@ -870,19 +752,15 @@ export async function GET(
       "❌ Erreur /api/company-financials:",
       error
     );
-
     const message =
       error instanceof Error
         ? error.message
         : String(error);
-
     return NextResponse.json(
       {
         success: false,
-
         error:
           message,
-
         details:
           error instanceof Error
             ? error.stack
