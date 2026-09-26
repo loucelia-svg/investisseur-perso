@@ -312,13 +312,11 @@ function calculateSeriesGrowth(
   }
   return null;
 }
-
 function formatGrowth(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "—";
   const sign = value > 0 ? "+" : "";
   return `${sign}${formatNumber(value, 2)} %`;
 }
-
 function ChartTooltip({
   x,
   y,
@@ -372,7 +370,6 @@ function calculateCagr(
   const elapsed = end.year - start.year;
   return (Math.pow(end.value / start.value, 1 / elapsed) - 1) * 100;
 }
-
 function CagrSummary({ data }: { data: Array<{ year: number; value: number | null }> }) {
   const periods = [5, 10, 20];
   return (
@@ -389,7 +386,6 @@ function CagrSummary({ data }: { data: Array<{ year: number; value: number | nul
     </div>
   );
 }
-
 /* -------------------------------------------------------------------------- */
 /* COURBE */
 /* -------------------------------------------------------------------------- */
@@ -1074,11 +1070,11 @@ function PremiumCashDebtChart({
             if (left < 4) left = 4;
             if (left > width - tooltipWidth - 4) left = width - tooltipWidth - 4;
             if (top < 4) top = paddingTop + 12;
-            const cashGrowth = calculateGrowth(
+            const cashGrowth = calculateSeriesGrowth(
               data.map((row) => ({ year: row.year, value: row.cash })),
               hoveredIndex
             );
-            const debtGrowth = calculateGrowth(
+            const debtGrowth = calculateSeriesGrowth(
               data.map((row) => ({ year: row.year, value: row.debt })),
               hoveredIndex
             );

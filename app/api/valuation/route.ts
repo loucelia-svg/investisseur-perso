@@ -236,7 +236,6 @@ function getAveragePs(
   const recent = getRecentValues(rows, years);
   return average(recent.map((row) => row.ps));
 }
-
 type TtmFundamentals = {
   revenue: number | null;
   freeCashFlow: number | null;
@@ -248,14 +247,12 @@ type TtmFundamentals = {
   cashAndShortTermInvestments: number | null;
   totalDebt: number | null;
 };
-
 async function getTtmFundamentals(
   symbol: string
 ): Promise<TtmFundamentals> {
   const period2 = new Date();
   const period1 = new Date(period2);
   period1.setUTCFullYear(period1.getUTCFullYear() - 2);
-
   try {
     const modules = ["financials", "cash-flow", "balance-sheet"] as const;
     const results = await Promise.all(
@@ -271,19 +268,34 @@ async function getTtmFundamentals(
         )
       )
     );
-
-    const rows = results
+    type DynamicFundamentalRow = Record<string, unknown>;
+    const rows: DynamicFundamentalRow[] = results
       .flat()
-      .filter((row): row is Record<string, any> => Boolean(row));
-
-    const timestamp = (row: Record<string, any>) => {
+      .filter(Boolean)
+      .map(
+        (row) =>
+          row as unknown as DynamicFundamentalRow
+      );
+    const timestamp = (row: DynamicFundamentalRow) => {
       const raw = row.date;
-      const date = raw instanceof Date ? raw : new Date(raw);
-      return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+      if (
+        !(
+          raw instanceof Date ||
+          typeof raw === "string" ||
+          typeof raw === "number"
+        )
+      ) {
+        return 0;
+      }
+      const date =
+        raw instanceof Date
+          ? raw
+          : new Date(raw);
+      return Number.isNaN(date.getTime())
+        ? 0
+        : date.getTime();
     };
-
     rows.sort((a, b) => timestamp(b) - timestamp(a));
-
     const latestFour = (key: string) => {
       const seen = new Set<number>();
       const values: number[] = [];
@@ -299,7 +311,6 @@ async function getTtmFundamentals(
         ? values.reduce((sum, value) => sum + value, 0)
         : null;
     };
-
     const latestValue = (...keys: string[]) => {
       for (const row of rows) {
         for (const key of keys) {
@@ -309,7 +320,6 @@ async function getTtmFundamentals(
       }
       return null;
     };
-
     return {
       revenue: latestFour("totalRevenue"),
       freeCashFlow: latestFour("freeCashFlow"),
@@ -347,7 +357,6 @@ async function getTtmFundamentals(
     };
   }
 }
-
 async function getCurrentQuote(
   symbol: string
 ) {
@@ -842,7 +851,6 @@ export async function GET(
         ? quote.price /
           currentFcfPerShare
         : null;
-
     const ttmShares = normalizeShares(ttmFundamentals.dilutedShares);
     const ttmFcfPerShare =
       ttmShares !== null &&
@@ -877,7 +885,6 @@ export async function GET(
       quote.price !== null && ttmRevenuePerShare !== null && ttmRevenuePerShare > 0
         ? quote.price / ttmRevenuePerShare
         : null;
-
     return NextResponse.json({
       success: true,
       company:
