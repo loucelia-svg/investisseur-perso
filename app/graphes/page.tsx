@@ -31,6 +31,29 @@ type HistoricalResponse = {
   Hermès?: HistoricalFundamental[];
 };
 type Company = "LVMH" | "Hermès";
+const TTM_PERIOD = 9999;
+const LATEST_QUARTER_PERIOD = 9998;
+function formatPeriodLabel(year: number): string {
+  if (year === TTM_PERIOD) return "TTM";
+  if (year === LATEST_QUARTER_PERIOD) return "Dernier trim.";
+  return String(year);
+}
+type ValuationTtmResponse = {
+  success: boolean;
+  ttm?: {
+    revenue: number | null;
+    freeCashFlow: number | null;
+    stockBasedCompensation: number | null;
+    dilutedShares: number | null;
+    normalizedDilutedShares: number | null;
+    totalAssets: number | null;
+    goodwill: number | null;
+    currentLiabilities: number | null;
+    cashAndShortTermInvestments: number | null;
+    totalDebt: number | null;
+    freeCashFlowPerShare: number | null;
+  };
+};
 const COMPANY_LABELS: Record<Company, string> = {
   LVMH: "LVMH",
   Hermès: "Hermès",
@@ -275,75 +298,98 @@ function getXAxisYears(
 /* -------------------------------------------------------------------------- */
 /* TOOLTIP */
 /* -------------------------------------------------------------------------- */
+function calculateSeriesGrowth(
+  data: Array<{ year: number; value: number | null }>,
+  index: number
+): number | null {
+  const current = data[index]?.value;
+  if (current === null || current === undefined || !Number.isFinite(current)) return null;
+  for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
+    const previous = data[previousIndex]?.value;
+    if (previous !== null && previous !== undefined && Number.isFinite(previous) && previous !== 0) {
+      return ((current - previous) / Math.abs(previous)) * 100;
+    }
+  }
+  return null;
+}
+
+function formatGrowth(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatNumber(value, 2)} %`;
+}
+
 function ChartTooltip({
   x,
   y,
   year,
   value,
+  growth,
   formatter,
 }: {
   x: number;
   y: number;
   year: number;
   value: number;
+  growth: number | null;
   formatter: (value: number | null) => string;
 }) {
-  const tooltipWidth = 220;
-  const tooltipHeight = 96;
+  const tooltipWidth = 250;
+  const tooltipHeight = 132;
   let left = x - tooltipWidth / 2;
   let top = y - tooltipHeight - 18;
   const maxLeft = 760 - tooltipWidth - 4;
-  if (left < 4) {
-    left = 4;
-  }
-  if (left > maxLeft) {
-    left = maxLeft;
-  }
-  if (top < 4) {
-    top = y + 18;
-  }
+  if (left < 4) left = 4;
+  if (left > maxLeft) left = maxLeft;
+  if (top < 4) top = y + 18;
   return (
-    <g
-      pointerEvents="none"
-      style={{
-        filter:
-          "drop-shadow(0px 8px 18px rgba(65, 52, 40, 0.20))",
-      }}
-    >
-      <rect
-        x={left}
-        y={top}
-        width={tooltipWidth}
-        height={tooltipHeight}
-        rx="13"
-        fill="#fffdf8"
-        stroke="#d4c9bb"
-        strokeWidth="1.6"
-      />
-      <text
-        x={left + tooltipWidth / 2}
-        y={top + 31}
-        textAnchor="middle"
-        fontSize="19"
-        fontWeight="700"
-        fontFamily="Georgia, serif"
-        fill="#75695e"
-      >
-        {year}
+    <g pointerEvents="none" style={{ filter: "drop-shadow(0px 8px 18px rgba(65, 52, 40, 0.20))" }}>
+      <rect x={left} y={top} width={tooltipWidth} height={tooltipHeight} rx="13" fill="#fffdf8" stroke="#d4c9bb" strokeWidth="1.6" />
+      <text x={left + tooltipWidth / 2} y={top + 30} textAnchor="middle" fontSize="19" fontWeight="700" fontFamily="Georgia, serif" fill="#75695e">
+        {formatPeriodLabel(year)}
       </text>
-      <text
-        x={left + tooltipWidth / 2}
-        y={top + 72}
-        textAnchor="middle"
-        fontSize="36"
-        fontWeight="700"
-        fill="#40372f"
-      >
+      <text x={left + tooltipWidth / 2} y={top + 72} textAnchor="middle" fontSize="31" fontWeight="700" fill="#40372f">
         {formatter(value)}
+      </text>
+      <text x={left + tooltipWidth / 2} y={top + 108} textAnchor="middle" fontSize="18" fontWeight="600" fill="#75695e">
+        Croissance : {formatGrowth(growth)}
       </text>
     </g>
   );
 }
+function calculateCagr(
+  data: Array<{ year: number; value: number | null }>,
+  years: number
+): number | null {
+  const annual = data.filter(
+    (item) => item.year < LATEST_QUARTER_PERIOD && item.value !== null && Number.isFinite(item.value) && item.value > 0
+  ) as Array<{ year: number; value: number }>;
+  if (annual.length < 2) return null;
+  const end = annual[annual.length - 1];
+  const targetYear = end.year - years;
+  const start = [...annual].reverse().find((item) => item.year <= targetYear);
+  if (!start || start.value <= 0 || end.year <= start.year) return null;
+  const elapsed = end.year - start.year;
+  return (Math.pow(end.value / start.value, 1 / elapsed) - 1) * 100;
+}
+
+function CagrSummary({ data }: { data: Array<{ year: number; value: number | null }> }) {
+  const periods = [5, 10, 20];
+  return (
+    <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[11px] font-semibold text-[#75695e]">
+      <span className="mr-1 font-serif text-[#40372f]">CAGR</span>
+      {periods.map((years) => {
+        const value = calculateCagr(data, years);
+        return (
+          <span key={years} className="rounded-md bg-[#f2ede4] px-2 py-1">
+            {years} ans : {value === null ? "—" : formatGrowth(value)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* COURBE */
 /* -------------------------------------------------------------------------- */
@@ -606,7 +652,7 @@ function PremiumLineChart({
                   innerWidth;
           return (
             <text
-              key={year}
+              key={formatPeriodLabel(year)}
               x={x}
               y={height - 8}
               textAnchor="middle"
@@ -614,7 +660,7 @@ function PremiumLineChart({
               fontWeight="700"
               fill="#75695e"
             >
-              {year}
+              {formatPeriodLabel(year)}
             </text>
           );
         })}
@@ -624,6 +670,7 @@ function PremiumLineChart({
             y={hoveredPoint.y}
             year={hoveredPoint.year}
             value={hoveredPoint.value}
+            growth={calculateSeriesGrowth(data, hoveredPoint.index)}
             formatter={formatter}
           />
         )}
@@ -779,14 +826,12 @@ function PremiumBarChart({
                     : "0.82"
                 }
               />
-
             </g>
           );
         })}
         {hoveredIndex !== null &&
           (() => {
             const item = data[hoveredIndex];
-
             if (
               !item ||
               item.value === null ||
@@ -794,28 +839,25 @@ function PremiumBarChart({
             ) {
               return null;
             }
-
             const xCenter =
               paddingLeft +
               slotWidth * hoveredIndex +
               slotWidth / 2;
-
             const valueY =
               paddingTop +
               ((maxValue - item.value) / range) *
                 innerHeight;
-
             const y =
               item.value >= 0
                 ? valueY
                 : zeroY;
-
             return (
               <ChartTooltip
                 x={xCenter}
                 y={y}
                 year={item.year}
                 value={item.value}
+                growth={calculateSeriesGrowth(data, hoveredIndex)}
                 formatter={formatter}
               />
             );
@@ -834,7 +876,7 @@ function PremiumBarChart({
             slotWidth / 2;
           return (
             <text
-              key={year}
+              key={formatPeriodLabel(year)}
               x={xCenter}
               y={height - 8}
               textAnchor="middle"
@@ -842,7 +884,7 @@ function PremiumBarChart({
               fontWeight="700"
               fill="#75695e"
             >
-              {year}
+              {formatPeriodLabel(year)}
             </text>
           );
         })}
@@ -1002,55 +1044,53 @@ function PremiumCashDebtChart({
                     : "0.86"
                 }
               />
-
             </g>
           );
         })}
         {hoveredIndex !== null &&
           (() => {
             const item = data[hoveredIndex];
-
             if (!item) {
               return null;
             }
-
             const xCenter =
               paddingLeft +
               slotWidth * hoveredIndex +
               slotWidth / 2;
-
             const cashHeight =
               item.cash === null
                 ? 0
                 : (item.cash / maxValue) *
                   innerHeight;
-
             const debtHeight =
               item.debt === null
                 ? 0
                 : (item.debt / maxValue) *
                   innerHeight;
-
+            const tooltipWidth = 290;
+            const tooltipHeight = 156;
+            let left = xCenter - tooltipWidth / 2;
+            let top = paddingTop + innerHeight - Math.max(cashHeight, debtHeight) - tooltipHeight - 18;
+            if (left < 4) left = 4;
+            if (left > width - tooltipWidth - 4) left = width - tooltipWidth - 4;
+            if (top < 4) top = paddingTop + 12;
+            const cashGrowth = calculateGrowth(
+              data.map((row) => ({ year: row.year, value: row.cash })),
+              hoveredIndex
+            );
+            const debtGrowth = calculateGrowth(
+              data.map((row) => ({ year: row.year, value: row.debt })),
+              hoveredIndex
+            );
             return (
-              <ChartTooltip
-                x={xCenter}
-                y={
-                  paddingTop +
-                  innerHeight -
-                  Math.max(
-                    cashHeight,
-                    debtHeight
-                  )
-                }
-                year={item.year}
-                value={
-                  Math.max(
-                    item.cash ?? 0,
-                    item.debt ?? 0
-                  ) * 1_000_000
-                }
-                formatter={formatMillions}
-              />
+              <g pointerEvents="none" style={{ filter: "drop-shadow(0px 8px 18px rgba(65, 52, 40, 0.20))" }}>
+                <rect x={left} y={top} width={tooltipWidth} height={tooltipHeight} rx="13" fill="#fffdf8" stroke="#d4c9bb" strokeWidth="1.6" />
+                <text x={left + tooltipWidth / 2} y={top + 29} textAnchor="middle" fontSize="19" fontWeight="700" fontFamily="Georgia, serif" fill="#75695e">{formatPeriodLabel(item.year)}</text>
+                <text x={left + 20} y={top + 65} fontSize="17" fontWeight="700" fill="#5b2a72">Trésorerie : {item.cash === null ? "—" : `${formatNumber(item.cash, 0)} M€`}</text>
+                <text x={left + 20} y={top + 89} fontSize="17" fontWeight="600" fill="#75695e">Croissance : {formatGrowth(cashGrowth)}</text>
+                <text x={left + 20} y={top + 121} fontSize="17" fontWeight="700" fill="#b08a2e">Dette : {item.debt === null ? "—" : `${formatNumber(item.debt, 0)} M€`}</text>
+                <text x={left + 20} y={top + 145} fontSize="17" fontWeight="600" fill="#75695e">Croissance : {formatGrowth(debtGrowth)}</text>
+              </g>
             );
           })()}
         {xAxisYears.map((year) => {
@@ -1067,7 +1107,7 @@ function PremiumCashDebtChart({
             slotWidth / 2;
           return (
             <text
-              key={year}
+              key={formatPeriodLabel(year)}
               x={xCenter}
               y={height - 8}
               textAnchor="middle"
@@ -1075,7 +1115,7 @@ function PremiumCashDebtChart({
               fontWeight="700"
               fill="#75695e"
             >
-              {year}
+              {formatPeriodLabel(year)}
             </text>
           );
         })}
@@ -1134,6 +1174,8 @@ function GraphiquesContent() {
     useState<HistoricalResponse | null>(
       null
     );
+  const [valuation, setValuation] =
+    useState<ValuationTtmResponse | null>(null);
   const [loading, setLoading] =
     useState(true);
   const [error, setError] =
@@ -1144,12 +1186,16 @@ function GraphiquesContent() {
       try {
         setLoading(true);
         setError(null);
-        const response = await fetch(
-          "/api/historical-fundamentals?history=all",
-          {
-            cache: "no-store",
-          }
-        );
+        const [response, valuationResponse] = await Promise.all([
+          fetch(
+            "/api/historical-fundamentals?history=all",
+            { cache: "no-store" }
+          ),
+          fetch(
+            `/api/valuation?company=${encodeURIComponent(company)}`,
+            { cache: "no-store" }
+          ),
+        ]);
         if (!response.ok) {
           throw new Error(
             `Erreur HTTP ${response.status}`
@@ -1157,8 +1203,13 @@ function GraphiquesContent() {
         }
         const json =
           (await response.json()) as HistoricalResponse;
+        const valuationJson =
+          valuationResponse.ok
+            ? ((await valuationResponse.json()) as ValuationTtmResponse)
+            : null;
         if (!cancelled) {
           setData(json);
+          setValuation(valuationJson);
         }
       } catch (err) {
         if (!cancelled) {
@@ -1178,21 +1229,22 @@ function GraphiquesContent() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [company]);
   const history = useMemo(() => {
     return sortHistory(
       data?.[company] ?? []
     );
   }, [data, company]);
   const revenueGrowth = useMemo(() => {
-    return history.map((row) => ({
+    const annual = history.map((row) => ({
       year: row.year,
-      value:
-        row.revenue === null
-          ? null
-          : row.revenue / 1_000_000,
+      value: row.revenue === null ? null : row.revenue / 1_000_000,
     }));
-  }, [history]);
+    if (valuation?.ttm?.revenue != null) {
+      annual.push({ year: TTM_PERIOD, value: valuation.ttm.revenue / 1_000_000 });
+    }
+    return annual;
+  }, [history, valuation]);
   const grossMargin = useMemo(() => {
     return history.map((row) => ({
       year: row.year,
@@ -1212,16 +1264,42 @@ function GraphiquesContent() {
     }));
   }, [history]);
   const fcfPerShare = useMemo(() => {
-    return history.map((row) => ({
+    const annual = history.map((row) => ({
       year: row.year,
-      value: calculateFcfPerShare(
-        row.freeCashFlow,
-        row.dilutedShares
-      ),
+      value: calculateFcfPerShare(row.freeCashFlow, row.dilutedShares),
     }));
-  }, [history]);
+    if (valuation?.ttm?.freeCashFlowPerShare != null) {
+      annual.push({ year: TTM_PERIOD, value: valuation.ttm.freeCashFlowPerShare });
+    }
+    return annual;
+  }, [history, valuation]);
+  const freeCashFlowSeries = useMemo(() => {
+    const annual = history.map((row) => ({
+      year: row.year,
+      value: row.freeCashFlow === null ? null : row.freeCashFlow / 1_000_000,
+    }));
+    if (valuation?.ttm?.freeCashFlow != null) {
+      annual.push({ year: TTM_PERIOD, value: valuation.ttm.freeCashFlow / 1_000_000 });
+    }
+    return annual;
+  }, [history, valuation]);
+  const dilutedSharesSeries = useMemo(() => {
+    const annual = history.map((row) => ({
+      year: row.year,
+      value: row.dilutedShares === null
+        ? null
+        : row.dilutedShares > 1_000_000
+          ? row.dilutedShares / 1_000_000
+          : row.dilutedShares,
+    }));
+    const shares = valuation?.ttm?.normalizedDilutedShares;
+    if (shares != null) {
+      annual.push({ year: TTM_PERIOD, value: shares / 1_000_000 });
+    }
+    return annual;
+  }, [history, valuation]);
   const superRoic = useMemo(() => {
-    return history
+    const annual = history
       .map((row) => ({
         year: row.year,
         value: calculateSuperRoic(
@@ -1232,25 +1310,40 @@ function GraphiquesContent() {
           row.currentLiabilities
         ),
       }))
-      .filter(
-        (row) =>
-          row.value !== null &&
-          Number.isFinite(row.value)
+      .filter((row) => row.value !== null && Number.isFinite(row.value));
+    const ttm = valuation?.ttm;
+    if (ttm) {
+      const value = calculateSuperRoic(
+        ttm.freeCashFlow,
+        ttm.stockBasedCompensation,
+        ttm.totalAssets,
+        ttm.goodwill,
+        ttm.currentLiabilities
       );
-  }, [history]);
+      if (value !== null && Number.isFinite(value)) {
+        annual.push({ year: TTM_PERIOD, value });
+      }
+    }
+    return annual;
+  }, [history, valuation]);
   const cashDebt = useMemo(() => {
-    return history.map((row) => ({
+    const annual = history.map((row) => ({
       year: row.year,
-      cash:
-        row.cash === null
-          ? null
-          : row.cash / 1_000_000,
-      debt:
-        row.totalDebt === null
-          ? null
-          : row.totalDebt / 1_000_000,
+      cash: row.cash === null ? null : row.cash / 1_000_000,
+      debt: row.totalDebt === null ? null : row.totalDebt / 1_000_000,
     }));
-  }, [history]);
+    const ttm = valuation?.ttm;
+    if (ttm?.cashAndShortTermInvestments != null || ttm?.totalDebt != null) {
+      annual.push({
+        year: LATEST_QUARTER_PERIOD,
+        cash: ttm.cashAndShortTermInvestments == null
+          ? null
+          : ttm.cashAndShortTermInvestments / 1_000_000,
+        debt: ttm.totalDebt == null ? null : ttm.totalDebt / 1_000_000,
+      });
+    }
+    return annual;
+  }, [history, valuation]);
   return (
     <main
       className={`${gothicFont.variable} min-h-screen px-4 pb-20 text-[#40372f] sm:px-6 lg:px-10`}
@@ -1349,23 +1442,14 @@ function GraphiquesContent() {
                           )} M€`
                     }
                   />
+                  <CagrSummary data={revenueGrowth} />
                 </GraphCard>
                 <GraphCard
                   title="Free Cash Flow annuel"
                   description="Flux de trésorerie disponible généré chaque année"
                 >
                   <PremiumBarChart
-                    data={history.map(
-                      (row) => ({
-                        year: row.year,
-                        value:
-                          row.freeCashFlow ===
-                          null
-                            ? null
-                            : row.freeCashFlow /
-                              1_000_000,
-                      })
-                    )}
+                    data={freeCashFlowSeries}
                     valueKey="free-cash-flow"
                     formatter={(value) =>
                       value === null
@@ -1376,6 +1460,7 @@ function GraphiquesContent() {
                           )} M€`
                     }
                   />
+                  <CagrSummary data={freeCashFlowSeries} />
                 </GraphCard>
                 <GraphCard
                   title="Free Cash Flow par action"
@@ -1388,6 +1473,7 @@ function GraphiquesContent() {
                       formatPerShare
                     }
                   />
+                  <CagrSummary data={fcfPerShare} />
                 </GraphCard>
                 {/* RANGÉE 2 */}
                 <GraphCard
@@ -1429,17 +1515,7 @@ function GraphiquesContent() {
                   description="Évolution du nombre moyen d'actions diluées"
                 >
                   <PremiumBarChart
-                    data={history.map(
-                      (row) => ({
-                        year: row.year,
-                        value:
-                          row.dilutedShares ===
-                          null
-                            ? null
-                            : row.dilutedShares /
-                              1_000_000,
-                      })
-                    )}
+                    data={dilutedSharesSeries}
                     valueKey="diluted-shares"
                     formatter={(value) =>
                       value === null

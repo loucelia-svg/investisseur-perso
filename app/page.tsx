@@ -4,7 +4,6 @@ import Link from "next/link";
 import { isParisMarketOpen } from "@/lib/marketHours";
 import { stocks } from "@/lib/stocks";
 import {
-  FormEvent,
   useEffect,
   useState,
 } from "react";
@@ -14,67 +13,9 @@ const unifraktur = localFont({
   src: "./fonts/UnifrakturMaguntia-Book.ttf",
   display: "swap",
 });
-type CompanySearchResult = {
-  symbol: string;
-  name: string;
-  shortName: string | null;
-  longName: string | null;
-  exchange: string | null;
-  quoteType: string | null;
-};
-type CompanySearchResponse = {
-  success: boolean;
-  query?: string;
-  results?: CompanySearchResult[];
-  error?: string;
-};
-type CompanyFinancialsResponse = {
-  success: boolean;
-  symbol?: string;
-  period?: { startYear: number; endYear: number; years: number[] };
-  criteria?: {
-    revenueGrowthCagr: number | null;
-    netDebtToFCF: number | null;
-    freeCashFlowGrowthCagr: number | null;
-    dilutedSharesChange: number | null;
-    superRoic: number | null;
-    averageFcfMargin: number | null;
-  };
-  error?: string;
-};
-type CriterionCard = { title: string; subtitle: string; value: number | null; suffix: string; passed: boolean | null };
 export default function Home() {
   const [liveStocks, setLiveStocks] =
     useState(stocks);
-  const [
-    companySearchOpen,
-    setCompanySearchOpen,
-  ] = useState(false);
-  const [
-    companySearch,
-    setCompanySearch,
-  ] = useState("");
-  const [
-    companySearchResults,
-    setCompanySearchResults,
-  ] = useState<CompanySearchResult[]>([]);
-  const [
-    companySearchLoading,
-    setCompanySearchLoading,
-  ] = useState(false);
-  const [
-    companySearchError,
-    setCompanySearchError,
-  ] = useState<string | null>(null);
-  const [
-    selectedCompany,
-    setSelectedCompany,
-  ] = useState<CompanySearchResult | null>(
-    null
-  );
-  const [companyFinancials, setCompanyFinancials] = useState<CompanyFinancialsResponse | null>(null);
-  const [companyFinancialsLoading, setCompanyFinancialsLoading] = useState(false);
-  const [companyFinancialsError, setCompanyFinancialsError] = useState<string | null>(null);
   const marketOpen = isParisMarketOpen();
   function urlBase64ToUint8Array(
     base64String: string
@@ -94,93 +35,6 @@ export default function Home() {
         char.charCodeAt(0)
       )
     );
-  }
-  async function searchCompany(
-    event: FormEvent<HTMLFormElement>
-  ) {
-    event.preventDefault();
-    const query =
-      companySearch.trim();
-    if (!query) {
-      return;
-    }
-    setCompanySearchLoading(true);
-    setCompanySearchError(null);
-    setCompanySearchResults([]);
-    setSelectedCompany(null);
-    try {
-      const response =
-        await fetch(
-          `/api/company-search?q=${encodeURIComponent(
-            query
-          )}`
-        );
-      const data =
-        (await response.json()) as CompanySearchResponse;
-      if (
-        !response.ok ||
-        !data.success
-      ) {
-        throw new Error(
-          data.error ??
-            "Impossible d'effectuer la recherche."
-        );
-      }
-      const results =
-        Array.isArray(data.results)
-          ? data.results
-          : [];
-      setCompanySearchResults(
-        results
-      );
-      if (results.length === 0) {
-        setCompanySearchError(
-          "Aucune entreprise trouvée."
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Erreur recherche entreprise :",
-        error
-      );
-      setCompanySearchError(
-        error instanceof Error
-          ? error.message
-          : "Une erreur est survenue."
-      );
-    } finally {
-      setCompanySearchLoading(false);
-    }
-  }
-  async function selectCompany(company: CompanySearchResult) {
-    setSelectedCompany(company);
-    setCompanySearchResults([]);
-    setCompanySearchError(null);
-    setCompanySearch(company.name);
-    setCompanyFinancials(null);
-    setCompanyFinancialsError(null);
-    setCompanyFinancialsLoading(true);
-    try {
-      const response = await fetch(`/api/company-financials?symbol=${encodeURIComponent(company.symbol)}`);
-      const data = (await response.json()) as CompanyFinancialsResponse;
-      if (!response.ok || !data.success) throw new Error(data.error ?? "Impossible de calculer les critères de cette entreprise.");
-      setCompanyFinancials(data);
-    } catch (error) {
-      console.error("Erreur analyse entreprise :", error);
-      setCompanyFinancialsError(error instanceof Error ? error.message : "Une erreur est survenue pendant l'analyse.");
-    } finally {
-      setCompanyFinancialsLoading(false);
-    }
-  }
-  function toggleCompanySearch() {
-    setCompanySearchOpen(
-      (current) => !current
-    );
-    setCompanySearchResults([]);
-    setCompanySearchError(null);
-    setSelectedCompany(null);
-    setCompanyFinancials(null);
-    setCompanyFinancialsError(null);
   }
   useEffect(() => {
     const registerPush = async () => {
@@ -306,7 +160,7 @@ export default function Home() {
         {/* MES ACTIONS */}
         {/* ========================= */}
         <section>
-          <div className="grid gap-5 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             {liveStocks.map((stock) => {
               return (
                 <article
@@ -325,7 +179,7 @@ export default function Home() {
                             ? "/entreprises/lvmh"
                             : "/entreprises/hermes"
                         }
-                        className="text-2xl font-bold transition-opacity hover:opacity-70"
+                        className="font-[Georgia] text-2xl font-bold transition-opacity hover:opacity-70"
                       >
                         {stock.name}
                       </Link>
@@ -401,19 +255,19 @@ export default function Home() {
                         href={`/graphes?company=${encodeURIComponent(
                           stock.name
                         )}`}
-                        className="relative inline-block text-sm text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
+                        className={`${unifraktur.className} relative inline-block text-[17px] text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full`}
                       >
                         Graphique
                       </Link>
                       <a
                         href={
                           stock.name === "LVMH"
-                            ? "https://stockanalysis.com/quote/epa/MC/financials/income-statement/"
-                            : "https://stockanalysis.com/quote/epa/RMS/financials/income-statement/"
+                            ? "https\://stockanalysis.com/quote/epa/MC/financials/income-statement/"
+                            : "https\://stockanalysis.com/quote/epa/RMS/financials/income-statement/"
                         }
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="relative inline-block text-sm text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
+                        className={`${unifraktur.className} relative inline-block text-[17px] text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full`}
                       >
                         Income Statement
                       </a>
@@ -422,41 +276,56 @@ export default function Home() {
                   {/* ========================= */}
                   {/* ALERTES */}
                   {/* ========================= */}
-                  <div className="mt-7 border-t border-slate-100 pt-5">
-                    <p className="mb-3 text-sm font-semibold text-slate-700">
-                      🔔 Mes alertes
+                  <div className="mt-7 border-t border-[#ded6ca]/70 pt-5">
+                    <p className="mb-3 font-serif text-[17px] font-semibold tracking-[-0.01em] text-[#40372f]">
+                      Alertes 🔔
                     </p>
-                    <div className="flex flex-wrap gap-2">
-                      {stock.alerts.map(
-                        (alert) => {
-                          const reached =
-                            stock.price !== null && stock.price <= alert;
-                          return (
+                    <div className="flex flex-wrap gap-2.5">
+                      {stock.alerts.map((alert) => {
+                        const reached =
+                          stock.price !== null &&
+                          stock.price <= alert;
+                        return (
+                          <div
+                            key={alert}
+                            className={`inline-flex items-center gap-2.5 rounded-[14px] border px-3.5 py-2.5 shadow-[0_4px_16px_rgba(84,68,48,0.04)] ${
+                              reached
+                                ? "border-[#b8d3bd] bg-[#eef7ef]"
+                                : "border-[#ded6ca] bg-[#fdfbf5]/90"
+                            }`}
+                          >
                             <span
-                              key={alert}
-                              className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+                              className={`h-2 w-2 shrink-0 rounded-full ${
                                 reached
-                                  ? "bg-green-100 text-green-800"
-                                  : "bg-slate-100 text-slate-700"
+                                  ? "bg-[#6f9877]"
+                                  : "bg-[#9a7bab]"
+                              }`}
+                            />
+                            <span
+                              className={`text-[14px] font-semibold ${
+                                reached
+                                  ? "text-[#315d3a]"
+                                  : "text-[#40372f]"
                               }`}
                             >
-                              {reached
-                                ? "🟢 Atteint"
-                                : "⚪ Non atteint"}{" "}
-                              — ≤{" "}
-                              {alert.toLocaleString(
-                                "fr-FR",
-                                {
-                                  style:
-                                    "currency",
-                                  currency:
-                                    "EUR",
-                                }
-                              )}
+                              ≤{" "}
+                              {alert.toLocaleString("fr-FR", {
+                                style: "currency",
+                                currency: "EUR",
+                              })}
                             </span>
-                          );
-                        }
-                      )}
+                            <span
+                              className={`text-[11px] font-medium ${
+                                reached
+                                  ? "text-[#68816d]"
+                                  : "text-[#9a8f83]"
+                              }`}
+                            >
+                              {reached ? "Atteint" : "Non atteint"}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </article>
@@ -500,146 +369,12 @@ export default function Home() {
         {/* RECHERCHE ENTREPRISE */}
         {/* ========================= */}
         <div className="mt-10 text-center">
-           <Link
-             href="/recherche"
-              className="relative inline-block text-sm text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
-                >
-                Rechercher une entreprise
-              </Link>
-          {companySearchOpen && (
-            <div className="mx-auto mt-5 max-w-xl text-left">
-              <form
-                onSubmit={
-                  searchCompany
-                }
-                className="flex gap-3"
-              >
-                <input
-                  type="text"
-                  value={
-                    companySearch
-                  }
-                  onChange={(
-                    event
-                  ) => {
-                    setCompanySearch(
-                      event.target.value
-                    );
-                    setSelectedCompany(
-                      null
-                    );
-                    setCompanySearchResults(
-                      []
-                    );
-                    setCompanySearchError(
-                      null
-                    );
-                  }}
-                  placeholder="Nom de l'entreprise ou symbole boursier"
-                  autoFocus
-                  className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500"
-                />
-                <button
-                  type="submit"
-                  disabled={
-                    companySearch.trim()
-                      .length === 0 ||
-                    companySearchLoading
-                  }
-                  className="rounded-xl bg-slate-900 px-5 py-3 text-base font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {companySearchLoading
-                    ? "Recherche..."
-                    : "Rechercher"}
-                </button>
-              </form>
-              {companySearchError && (
-                <p className="mt-4 text-center text-sm text-red-700">
-                  {companySearchError}
-                </p>
-              )}
-              {companySearchResults.length >
-                0 && (
-                <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                  {companySearchResults.map(
-                    (company) => (
-                      <button
-                        key={`${company.symbol}-${company.exchange ?? ""}`}
-                        type="button"
-                        onClick={() =>
-                          selectCompany(
-                            company
-                          )
-                        }
-                        className="flex w-full items-center justify-between gap-5 border-b border-slate-100 px-4 py-4 text-left transition last:border-b-0 hover:bg-slate-50"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-semibold text-slate-900">
-                            {company.name}
-                          </p>
-                          <p className="mt-1 text-sm text-slate-500">
-                            {company.exchange ??
-                              "Bourse non précisée"}
-                          </p>
-                        </div>
-                        <span className="shrink-0 text-sm font-semibold text-slate-700">
-                          {company.symbol}
-                        </span>
-                      </button>
-                    )
-                  )}
-                </div>
-              )}
-              {selectedCompany && (
-                <div className="mt-5 border-t border-slate-200 pt-5">
-                  <div className="text-center">
-                    <p className="text-lg font-semibold text-slate-900">{selectedCompany.name}</p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {selectedCompany.symbol}{selectedCompany.exchange ? ` — ${selectedCompany.exchange}` : ""}
-                    </p>
-                  </div>
-                  {companyFinancialsLoading && <p className="mt-6 text-center text-sm text-slate-500">Calcul des 6 critères...</p>}
-                  {companyFinancialsError && <p className="mt-6 text-center text-sm text-red-700">{companyFinancialsError}</p>}
-                  {companyFinancials?.criteria && (
-                    <div className="mt-7">
-                      {companyFinancials.period && (
-                        <p className="mb-4 text-center text-xs text-slate-500">
-                          Analyse des exercices {companyFinancials.period.startYear} → {companyFinancials.period.endYear}
-                        </p>
-                      )}
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        {([
-                          { title: "Croissance du chiffre d'affaires", subtitle: "par an sur les 5 dernières années, doit être supérieur à 10%", value: companyFinancials.criteria.revenueGrowthCagr, suffix: "%", passed: companyFinancials.criteria.revenueGrowthCagr == null ? null : companyFinancials.criteria.revenueGrowthCagr > 10 },
-                          { title: "Dette nette / Free cash flow", subtitle: "au dernier trimestre, doit être inférieur à 3", value: companyFinancials.criteria.netDebtToFCF, suffix: "", passed: companyFinancials.criteria.netDebtToFCF == null ? null : companyFinancials.criteria.netDebtToFCF < 3 },
-                          { title: "Croissance du Free cash flow", subtitle: "par an sur les 5 dernières années, doit être supérieur à 10%", value: companyFinancials.criteria.freeCashFlowGrowthCagr, suffix: "%", passed: companyFinancials.criteria.freeCashFlowGrowthCagr == null ? null : companyFinancials.criteria.freeCashFlowGrowthCagr > 10 },
-                          { title: "Nombre d'actions en circulation", subtitle: "sur les 5 dernières années, doit être inférieur ou égal à 0%", value: companyFinancials.criteria.dilutedSharesChange, suffix: "%", passed: companyFinancials.criteria.dilutedSharesChange == null ? null : companyFinancials.criteria.dilutedSharesChange <= 0 },
-                          { title: "Super ROIC", subtitle: "Super ROIC en moyenne sur 5 ans, doit être supérieur à 15%", value: companyFinancials.criteria.superRoic, suffix: "%", passed: companyFinancials.criteria.superRoic == null ? null : companyFinancials.criteria.superRoic > 15 },
-                          { title: "Marge du Free cash flow", subtitle: "en moyenne sur 5 ans, doit être supérieur à 10%", value: companyFinancials.criteria.averageFcfMargin, suffix: "%", passed: companyFinancials.criteria.averageFcfMargin == null ? null : companyFinancials.criteria.averageFcfMargin > 10 },
-                        ] satisfies CriterionCard[]).map((criterion) => (
-                          <div
-                            key={criterion.title}
-                            className={`rounded-xl border p-4 text-center shadow-sm ${
-                              criterion.passed === true
-                                ? "border-green-200 bg-green-50"
-                                : criterion.passed === false
-                                  ? "border-red-200 bg-red-50"
-                                  : "border-slate-200 bg-white"
-                            }`}
-                          >
-                            <p className="text-sm font-semibold text-slate-900">{criterion.title}</p>
-                            <p className="mt-1 min-h-10 text-[11px] leading-4 text-slate-500">{criterion.subtitle}</p>
-                            <p className="mt-3 text-2xl font-bold text-slate-900">
-                              {criterion.value == null ? "—" : `${criterion.value.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${criterion.suffix}`}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          <Link
+            href="/analyse"
+            className={`${unifraktur.className} relative inline-block text-[17px] text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full`}
+          >
+            Analyse d'entreprise
+          </Link>
         </div>
       </div>
     </main>
