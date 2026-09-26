@@ -1,6 +1,13 @@
 "use client";
+import localFont from "next/font/local";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+
+const unifraktur = localFont({
+  src: "../app/fonts/UnifrakturMaguntia-Book.ttf",
+  display: "swap",
+});
 type AnnualFundamental = {
   year: number;
   revenue: number | null;
@@ -714,20 +721,21 @@ export default function InvestmentCriteria({
         <button
           type="button"
           onClick={() => setCriteriaOpen(true)}
-          className="relative inline-block text-sm text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
+          className={`${unifraktur.className} relative inline-block text-[17px] text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full`}
         >
           Critères d’investissement ✨
         </button>
       </div>
-
-      {criteriaOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/25 px-4 py-8 backdrop-blur-[2px]"
+      {criteriaOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex h-screen w-screen items-center justify-center overflow-y-auto bg-black/25 px-6 py-8 backdrop-blur-[2px]"
           onClick={() => setCriteriaOpen(false)}
           role="presentation"
         >
           <div
-            className="w-full max-w-[1380px] rounded-[26px] border border-[#ded6ca] bg-[#f3eee3]/95 p-5 shadow-[0_24px_80px_rgba(64,55,47,0.22)] sm:p-7"
+            className="my-auto w-[min(1380px,calc(100vw-48px))] max-h-[calc(100vh-64px)] overflow-y-auto rounded-[26px] border border-[#ded6ca] bg-[#f3eee3]/95 p-5 shadow-[0_24px_80px_rgba(64,55,47,0.22)] sm:p-7"
             onClick={(event) => event.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -757,7 +765,6 @@ export default function InvestmentCriteria({
                   : criterion.passed
                     ? "text-[#315d3a]"
                     : "text-[#7b3834]";
-
                 return (
                   <button
                     key={criterion.id}
@@ -803,8 +810,9 @@ export default function InvestmentCriteria({
               })}
             </div>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </section>
   );
 }

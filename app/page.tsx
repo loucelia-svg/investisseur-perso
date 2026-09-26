@@ -1,6 +1,7 @@
 "use client";
 import localFont from "next/font/local";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { isParisMarketOpen } from "@/lib/marketHours";
 import { stocks } from "@/lib/stocks";
 import {
@@ -16,6 +17,8 @@ const unifraktur = localFont({
 export default function Home() {
   const [liveStocks, setLiveStocks] =
     useState(stocks);
+  const [stockChartOpen, setStockChartOpen] =
+    useState<"LVMH" | "Hermès" | null>(null);
   const marketOpen = isParisMarketOpen();
   function urlBase64ToUint8Array(
     base64String: string
@@ -176,7 +179,7 @@ export default function Home() {
               return (
                 <article
                   key={stock.name}
-                  className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+                  className="rounded-2xl border border-slate-200 bg-[#fdf8ee]/85 p-6 shadow-sm backdrop-blur-[2px]"
                 >
                   {/* ========================= */}
                   {/* NOM + STATUT */}
@@ -251,13 +254,19 @@ export default function Home() {
                     {/* ========================= */}
                     {/* GRAPHIQUE DU COURS */}
                     {/* ========================= */}
-                    <StockPriceChart
-                      company={
-                        stock.name as
-                          | "LVMH"
-                          | "Hermès"
-                      }
-                    />
+                    <div className="mt-5 text-center">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setStockChartOpen(
+                            stock.name as "LVMH" | "Hermès"
+                          )
+                        }
+                        className={`${unifraktur.className} relative inline-block text-[17px] text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full`}
+                      >
+                        Cours de l'action
+                      </button>
+                    </div>
                     {/* ========================= */}
                     {/* DOCUMENTS FINANCIERS */}
                     {/* ========================= */}
@@ -273,8 +282,8 @@ export default function Home() {
                       <a
                         href={
                           stock.name === "LVMH"
-                            ? "https\\://stockanalysis.com/quote/epa/MC/financials/income-statement/"
-                            : "https\\://stockanalysis.com/quote/epa/RMS/financials/income-statement/"
+                            ? "https\\\\://stockanalysis.com/quote/epa/MC/financials/income-statement/"
+                            : "https\\\\://stockanalysis.com/quote/epa/RMS/financials/income-statement/"
                         }
                         target="_blank"
                         rel="noopener noreferrer"
@@ -377,6 +386,26 @@ export default function Home() {
           </section>
         )}
       </div>
+      {stockChartOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex h-screen w-screen items-center justify-center overflow-y-auto bg-black/25 px-4 py-8 backdrop-blur-[2px]"
+            onClick={() => setStockChartOpen(null)}
+            role="presentation"
+          >
+            <div
+              className="w-full max-w-[700px] max-h-[calc(100vh-64px)] overflow-y-auto rounded-[26px] border border-[#ded6ca] bg-[#f3eee3]/95 p-5 shadow-[0_24px_80px_rgba(64,55,47,0.22)] sm:p-7"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Cours de l'action — ${stockChartOpen}`}
+            >
+              <StockPriceChart company={stockChartOpen} />
+            </div>
+          </div>,
+          document.body
+        )}
     </main>
   );
 }
