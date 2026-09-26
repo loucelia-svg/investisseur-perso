@@ -157,6 +157,17 @@ export default function Home() {
           </p>
         </header>
         {/* ========================= */}
+        {/* ANALYSE D'ENTREPRISE */}
+        {/* ========================= */}
+        <div className="mb-7 text-center">
+          <Link
+            href="/analyse"
+            className={`${unifraktur.className} relative inline-block text-[17px] text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full`}
+          >
+            Analyse d'entreprise
+          </Link>
+        </div>
+        {/* ========================= */}
         {/* MES ACTIONS */}
         {/* ========================= */}
         <section>
@@ -262,8 +273,8 @@ export default function Home() {
                       <a
                         href={
                           stock.name === "LVMH"
-                            ? "https\://stockanalysis.com/quote/epa/MC/financials/income-statement/"
-                            : "https\://stockanalysis.com/quote/epa/RMS/financials/income-statement/"
+                            ? "https\\://stockanalysis.com/quote/epa/MC/financials/income-statement/"
+                            : "https\\://stockanalysis.com/quote/epa/RMS/financials/income-statement/"
                         }
                         target="_blank"
                         rel="noopener noreferrer"
@@ -365,17 +376,6 @@ export default function Home() {
             </div>
           </section>
         )}
-        {/* ========================= */}
-        {/* RECHERCHE ENTREPRISE */}
-        {/* ========================= */}
-        <div className="mt-10 text-center">
-          <Link
-            href="/analyse"
-            className={`${unifraktur.className} relative inline-block text-[17px] text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full`}
-          >
-            Analyse d'entreprise
-          </Link>
-        </div>
       </div>
     </main>
   );
