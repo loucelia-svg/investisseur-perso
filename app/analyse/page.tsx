@@ -657,6 +657,8 @@ function PremiumLineChart({
   valueKey,
   percent = false,
   formatter,
+  axisFormatter,
+  chartHeight = 300,
 }: {
   data: Array<{
     year: number | string;
@@ -668,6 +670,8 @@ function PremiumLineChart({
   formatter: (
     value: number | null
   ) => string;
+  axisFormatter?: (value: number) => string;
+  chartHeight?: number;
 }) {
   const [hoveredIndex, setHoveredIndex] =
     useState<number | null>(null);
@@ -678,7 +682,7 @@ function PremiumLineChart({
     valueKey === "price-to-operating-cash-flow" ||
     valueKey === "price-to-earnings";
   const width = 760;
-  const height = 300;
+  const height = chartHeight;
   const paddingLeft = 68;
   const paddingRight = 22;
   const paddingTop = 20;
@@ -847,7 +851,11 @@ function PremiumLineChart({
                 fontWeight="700"
                 fill="#75695e"
               >
-                {percent ? formatPercent(value) : formatter(value)}
+                {percent
+                  ? formatPercent(value)
+                  : axisFormatter
+                    ? axisFormatter(value)
+                    : formatter(value)}
               </text>
             </g>
           );
@@ -1095,7 +1103,7 @@ function PremiumBarChart({
               <ChartTooltip
                 x={xCenter}
                 y={y}
-                year={item.year}
+                label={item.year}
                 value={item.value}
                 growth={calculateSeriesGrowth(data, hoveredIndex)}
                 formatter={formatter}
