@@ -44,6 +44,11 @@ type CompanyFinancialsResponse = {
   symbol?: string;
   period?: { startYear: number; endYear: number; years: number[] };
   annual?: HistoricalFundamental[];
+  latestQuarterlyBalanceSheet?: {
+    totalDebt: number | null;
+    cashAndShortTermInvestments: number | null;
+    netDebt: number | null;
+  };
   criteria?: {
     revenueGrowthCagr: number | null;
     netDebtToFCF: number | null;
@@ -55,8 +60,18 @@ type CompanyFinancialsResponse = {
   historicalSuperRoic?: Array<{ year: number; value: number | null }>;
   error?: string;
 };
+type StockAnalysisResponse = {
+  balanceSheet?: {
+    netDebt: number | null;
+  };
+  annualCashFlow?: {
+    year: number;
+    unleveredFreeCashFlow: number | null;
+  };
+};
 type ValuationHistoryPoint = {
   year: number | string;
+  date?: string;
   value: number;
 };
 type ValuationResponse = {
@@ -80,14 +95,41 @@ type ValuationResponse = {
     historicalAverage: number | null;
     average5Years: number | null;
     average10Years: number | null;
+    median5Years?: number | null;
+    median10Years?: number | null;
     history: Array<{ year: number; pfcf: number; pfcfExSbc: number | null }>;
+    dailyHistory?: Array<{
+      date: string;
+      year: number;
+      pfcf: number;
+      pfcfExSbc: number | null;
+    }>;
   };
   ps?: {
     current: number | null;
     historicalAverage: number | null;
     average5Years: number | null;
     average10Years: number | null;
+    median5Years?: number | null;
+    median10Years?: number | null;
     history: Array<{ year: number; ps: number }>;
+    dailyHistory?: Array<{
+      date: string;
+      year: number;
+      ps: number;
+    }>;
+  };
+  pocf?: {
+    current?: number | null;
+    median5Years?: number | null;
+    median10Years?: number | null;
+    dailyHistory?: Array<{ date: string; year: number; pocf: number }>;
+  };
+  pe?: {
+    current?: number | null;
+    median5Years?: number | null;
+    median10Years?: number | null;
+    dailyHistory?: Array<{ date: string; year: number; pe: number }>;
   };
   ttm?: {
     revenue: number | null;
@@ -249,6 +291,163 @@ function calculateSuperRoic(
     100
   );
 }
+const LVMH_SBC_FALLBACK: Record<number, number> = {
+  2024: 127_000_000,
+  2025: 165_000_000,
+};
+function calculateCagr(
+  start: number | null,
+  end: number | null,
+  years: number
+): number | null {
+  if (
+    start === null ||
+    end === null ||
+    years <= 0 ||
+    start <= 0 ||
+    end <= 0
+  ) {
+    return null;
+  }
+  return (Math.pow(end / start, 1 / years) - 1) * 100;
+}
+function calculateTotalChange(
+  start: number | null,
+  end: number | null
+): number | null {
+  if (
+    start === null ||
+    end === null ||
+    start <= 0
+  ) {
+    return null;
+  }
+  return (end / start - 1) * 100;
+}
+function calculateAverageFcfMargin(
+  rows: HistoricalFundamental[]
+): number | null {
+  const margins = rows
+    .map((row) => {
+      if (
+        row.freeCashFlow === null ||
+        row.revenue === null ||
+        row.revenue <= 0
+      ) {
+        return null;
+      }
+      return (row.freeCashFlow / row.revenue) * 100;
+    })
+    .filter((value): value is number => value !== null);
+  if (margins.length === 0) return null;
+  return (
+    margins.reduce((sum, value) => sum + value, 0) /
+    margins.length
+  );
+}
+function calculateCriteriaFromHistory(
+  symbol: string,
+  rows: HistoricalFundamental[],
+  netDebt: number | null,
+  latestExternalUfcf: number | null
+) {
+  const sorted = [...rows].sort((a, b) => a.year - b.year);
+  // "5 dernières années" = évolution 2020 -> 2025 :
+  // 6 points annuels séparés par 5 intervalles.
+  const endYear = sorted.length > 0
+    ? sorted[sorted.length - 1].year
+    : null;
+  const startYear = endYear === null ? null : endYear - 5;
+  const criteriaRows =
+    startYear === null
+      ? []
+      : sorted.filter(
+          (row) =>
+            row.year >= startYear &&
+            row.year <= endYear!
+        );
+  const first =
+    startYear === null
+      ? null
+      : criteriaRows.find((row) => row.year === startYear) ?? null;
+  const last =
+    endYear === null
+      ? null
+      : criteriaRows.find((row) => row.year === endYear) ?? null;
+  const revenueGrowthCagr =
+    first && last
+      ? calculateCagr(first.revenue, last.revenue, 5)
+      : null;
+  const freeCashFlowGrowthCagr =
+    first && last
+      ? calculateCagr(first.freeCashFlow, last.freeCashFlow, 5)
+      : null;
+  const dilutedSharesChange =
+    first && last
+      ? calculateTotalChange(first.dilutedShares, last.dilutedShares)
+      : null;
+  const averageFcfMargin =
+    calculateAverageFcfMargin(criteriaRows);
+  // Le critère dette utilise le dernier UFCF annuel disponible,
+  // conformément au moteur de référence de l'application.
+  const latestHistoricalUfcf = [...criteriaRows]
+    .reverse()
+    .find(
+      (row) =>
+        row.unleveredFreeCashFlow !== null &&
+        Number.isFinite(row.unleveredFreeCashFlow) &&
+        row.unleveredFreeCashFlow > 0
+    )?.unleveredFreeCashFlow ?? null;
+  const latestUfcf =
+    latestExternalUfcf !== null &&
+    Number.isFinite(latestExternalUfcf) &&
+    latestExternalUfcf > 0
+      ? latestExternalUfcf
+      : latestHistoricalUfcf;
+  const netDebtToFCF =
+    netDebt !== null &&
+    latestUfcf !== null &&
+    latestUfcf > 0
+      ? netDebt / latestUfcf
+      : null;
+  // Super ROIC : moyenne stricte 2021 -> 2025 (5/5 années).
+  const superRoicRows = sorted.filter(
+    (row) => row.year >= 2021 && row.year <= 2025
+  );
+  const superRoicValues = superRoicRows.map((row) => {
+    const sbc =
+      row.stockBasedCompensation ??
+      (symbol === "MC.PA"
+        ? LVMH_SBC_FALLBACK[row.year] ?? null
+        : null);
+    return calculateSuperRoic(
+      row.freeCashFlow,
+      sbc,
+      row.totalAssets,
+      row.goodwill,
+      row.currentLiabilities
+    );
+  });
+  const validSuperRoic = superRoicValues.filter(
+    (value): value is number =>
+      value !== null && Number.isFinite(value)
+  );
+  const superRoic =
+    superRoicRows.length === 5 &&
+    validSuperRoic.length === 5
+      ? validSuperRoic.reduce((sum, value) => sum + value, 0) / 5
+      : null;
+  return {
+    startYear,
+    endYear,
+    revenueGrowthCagr,
+    netDebtToFCF,
+    freeCashFlowGrowthCagr,
+    dilutedSharesChange,
+    superRoic,
+    averageFcfMargin,
+  };
+}
 function sortHistory(
   rows: HistoricalFundamental[]
 ): HistoricalFundamental[] {
@@ -357,42 +556,46 @@ function calculateSeriesGrowth(
 ): number | null {
   const current = data[index]?.value ?? null;
   if (current === null || !Number.isFinite(current)) return null;
-
   for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
     const previous = data[previousIndex]?.value ?? null;
     if (previous !== null && Number.isFinite(previous)) {
       return calculateGrowth(current, previous);
     }
   }
-
   return null;
 }
-
 function ChartTooltip({
   x,
   y,
-  year,
+  label,
   value,
   growth,
   formatter,
+  compact = false,
 }: {
   x: number;
   y: number;
-  year: number | string;
+  label: number | string;
   value: number;
   growth: number | null;
   formatter: (value: number | null) => string;
+  compact?: boolean;
 }) {
-  const tooltipWidth = 230;
-  const tooltipHeight = 124;
+  const tooltipWidth = compact ? 176 : 230;
+  const tooltipHeight =
+    growth === null
+      ? compact
+        ? 70
+        : 92
+      : compact
+        ? 98
+        : 124;
   let left = x - tooltipWidth / 2;
   let top = y - tooltipHeight - 18;
   const maxLeft = 760 - tooltipWidth - 4;
-
   if (left < 4) left = 4;
   if (left > maxLeft) left = maxLeft;
   if (top < 4) top = y + 18;
-
   return (
     <g
       pointerEvents="none"
@@ -405,46 +608,47 @@ function ChartTooltip({
         y={top}
         width={tooltipWidth}
         height={tooltipHeight}
-        rx="13"
+        rx={compact ? "10" : "13"}
         fill="#fffdf8"
         stroke="#d4c9bb"
         strokeWidth="1.6"
       />
       <text
         x={left + tooltipWidth / 2}
-        y={top + 29}
+        y={top + (compact ? 23 : 29)}
         textAnchor="middle"
-        fontSize="19"
+        fontSize={compact ? "15" : "19"}
         fontWeight="700"
         fontFamily="Georgia, serif"
         fill="#75695e"
       >
-        {year}
+        {label}
       </text>
       <text
         x={left + tooltipWidth / 2}
-        y={top + 68}
+        y={top + (compact ? 52 : 68)}
         textAnchor="middle"
-        fontSize="31"
+        fontSize={compact ? "23" : "31"}
         fontWeight="700"
         fill="#40372f"
       >
         {formatter(value)}
       </text>
-      <text
-        x={left + tooltipWidth / 2}
-        y={top + 101}
-        textAnchor="middle"
-        fontSize="16"
-        fontWeight="700"
-        fill="#75695e"
-      >
-        {`Croissance : ${growth === null ? "—" : `${growth >= 0 ? "+" : ""}${formatNumber(growth, 2)} %`}`}
-      </text>
+      {growth !== null && (
+        <text
+          x={left + tooltipWidth / 2}
+          y={top + (compact ? 80 : 101)}
+          textAnchor="middle"
+          fontSize={compact ? "13" : "16"}
+          fontWeight="700"
+          fill="#75695e"
+        >
+          {`Croissance : ${growth >= 0 ? "+" : ""}${formatNumber(growth, 2)} %`}
+        </text>
+      )}
     </g>
   );
 }
-
 /* -------------------------------------------------------------------------- */
 /* COURBE */
 /* -------------------------------------------------------------------------- */
@@ -453,11 +657,10 @@ function PremiumLineChart({
   valueKey,
   percent = false,
   formatter,
-  axisFormatter,
-  chartHeight = 300,
 }: {
   data: Array<{
     year: number | string;
+    date?: string;
     value: number | null;
   }>;
   valueKey: string;
@@ -465,75 +668,55 @@ function PremiumLineChart({
   formatter: (
     value: number | null
   ) => string;
-  axisFormatter?: (value: number) => string;
-  chartHeight?: number;
 }) {
   const [hoveredIndex, setHoveredIndex] =
     useState<number | null>(null);
+  const isValuationMultiple =
+    valueKey === "pfcf" ||
+    valueKey === "pfcf-ex-sbc" ||
+    valueKey === "price-to-sales" ||
+    valueKey === "price-to-operating-cash-flow" ||
+    valueKey === "price-to-earnings";
   const width = 760;
-  const height = chartHeight;
+  const height = 300;
   const paddingLeft = 68;
   const paddingRight = 22;
   const paddingTop = 20;
   const paddingBottom = 42;
-  const innerWidth =
-    width -
-    paddingLeft -
-    paddingRight;
-  const innerHeight =
-    height -
-    paddingTop -
-    paddingBottom;
-  const values = data.map(
-    (item) => item.value
+  const innerWidth = width - paddingLeft - paddingRight;
+  const innerHeight = height - paddingTop - paddingBottom;
+  const validData = data.filter(
+    (item): item is {
+      year: number | string;
+      date?: string;
+      value: number;
+    } =>
+      item.value !== null &&
+      Number.isFinite(item.value)
   );
+  const values = validData.map((item) => item.value);
   const axis = getNiceAxis(values);
   const minValue = axis.min;
   const maxValue = axis.max;
-  const range =
-    maxValue - minValue === 0
-      ? 1
-      : maxValue - minValue;
-  const points = data
-    .map((item, index) => {
-      if (
-        item.value === null ||
-        !Number.isFinite(item.value)
-      ) {
-        return null;
-      }
-      const x =
-        data.length <= 1
-          ? paddingLeft +
-            innerWidth / 2
-          : paddingLeft +
-            (index /
-              (data.length - 1)) *
-              innerWidth;
-      const y =
-        paddingTop +
-        ((maxValue - item.value) /
-          range) *
-          innerHeight;
-      return {
-        x,
-        y,
-        year: item.year,
-        value: item.value,
-        index,
-      };
-    })
-    .filter(
-      (
-        point
-      ): point is {
-        x: number;
-        y: number;
-        year: number | string;
-        value: number;
-        index: number;
-      } => point !== null
-    );
+  const range = maxValue - minValue === 0 ? 1 : maxValue - minValue;
+  const points = validData.map((item, index) => {
+    const x =
+      validData.length <= 1
+        ? paddingLeft + innerWidth / 2
+        : paddingLeft +
+          (index / (validData.length - 1)) * innerWidth;
+    const y =
+      paddingTop +
+      ((maxValue - item.value) / range) * innerHeight;
+    return {
+      x,
+      y,
+      year: item.year,
+      date: item.date,
+      value: item.value,
+      index,
+    };
+  });
   if (points.length === 0) {
     return (
       <div className="flex h-[300px] items-center justify-center text-sm text-stone-400">
@@ -544,48 +727,89 @@ function PremiumLineChart({
   const linePath = points
     .map(
       (point, index) =>
-        `${
-          index === 0 ? "M" : "L"
-        } ${point.x.toFixed(
-          2
-        )} ${point.y.toFixed(2)}`
+        `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
     )
     .join(" ");
-  const baselineY =
-    paddingTop + innerHeight;
+  const baselineY = paddingTop + innerHeight;
   const firstPoint = points[0];
-  const lastPoint =
-    points[points.length - 1];
+  const lastPoint = points[points.length - 1];
   const areaPath =
     `${linePath} ` +
-    `L ${lastPoint.x.toFixed(
-      2
-    )} ${baselineY.toFixed(2)} ` +
-    `L ${firstPoint.x.toFixed(
-      2
-    )} ${baselineY.toFixed(2)} Z`;
+    `L ${lastPoint.x.toFixed(2)} ${baselineY.toFixed(2)} ` +
+    `L ${firstPoint.x.toFixed(2)} ${baselineY.toFixed(2)} Z`;
   const gradientId = `premium-gradient-${valueKey}`;
   const gridValues = axis.ticks;
   const hoveredPoint =
-    hoveredIndex === null
-      ? null
-      : points.find(
-          (point) =>
-            point.index ===
-            hoveredIndex
-        ) ?? null;
-  const xAxisYears =
-    getXAxisYears(data);
+    hoveredIndex === null ? null : points[hoveredIndex] ?? null;
+  const isDatedSeries = validData.some((item) => Boolean(item.date));
+  const formatExactDate = (date: string) => {
+    const parsed = new Date(`${date}T12:00:00Z`);
+    if (Number.isNaN(parsed.getTime())) return date;
+    return new Intl.DateTimeFormat("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(parsed);
+  };
+  const handleMouseMove = (
+    event: React.MouseEvent<SVGSVGElement>
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || points.length === 0) return;
+    const svgX =
+      ((event.clientX - rect.left) / rect.width) * width;
+    const clampedX = Math.min(
+      width - paddingRight,
+      Math.max(paddingLeft, svgX)
+    );
+    const ratio = (clampedX - paddingLeft) / innerWidth;
+    const index = Math.round(ratio * (points.length - 1));
+    setHoveredIndex(
+      Math.min(points.length - 1, Math.max(0, index))
+    );
+  };
+  // Keep the X axis readable: years only, while the tooltip shows the exact date.
+  const xLabels: Array<{ label: string; x: number }> = [];
+  if (isDatedSeries) {
+    const seen = new Set<number>();
+    const years = validData
+      .map((item) =>
+        item.date ? new Date(`${item.date}T12:00:00Z`).getUTCFullYear() : null
+      )
+      .filter((year): year is number => year !== null && Number.isFinite(year));
+    const uniqueYears = [...new Set(years)];
+    const every = Math.max(1, Math.ceil(uniqueYears.length / 8));
+    uniqueYears.forEach((year, yearIndex) => {
+      if (yearIndex % every !== 0 && yearIndex !== uniqueYears.length - 1) return;
+      const index = validData.findIndex(
+        (item) =>
+          item.date &&
+          new Date(`${item.date}T12:00:00Z`).getUTCFullYear() === year
+      );
+      if (index >= 0 && !seen.has(index)) {
+        seen.add(index);
+        xLabels.push({ label: String(year), x: points[index].x });
+      }
+    });
+  } else {
+    const xAxisYears = getXAxisYears(validData);
+    xAxisYears.forEach((year) => {
+      const index = validData.findIndex((item) => item.year === year);
+      if (index >= 0) {
+        xLabels.push({ label: String(year), x: points[index].x });
+      }
+    });
+  }
   return (
     <div className="w-full">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="h-auto w-full overflow-visible"
+        className="h-auto w-full overflow-visible cursor-crosshair"
         role="img"
         aria-label={`Graphique ${valueKey}`}
-        onMouseLeave={() =>
-          setHoveredIndex(null)
-        }
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHoveredIndex(null)}
       >
         <defs>
           <linearGradient
@@ -595,36 +819,20 @@ function PremiumLineChart({
             x2="0"
             y2="1"
           >
-            <stop
-              offset="0%"
-              stopColor="#5b2a72"
-              stopOpacity="0.30"
-            />
-            <stop
-              offset="65%"
-              stopColor="#7d4b92"
-              stopOpacity="0.12"
-            />
-            <stop
-              offset="100%"
-              stopColor="#c9b2d4"
-              stopOpacity="0.02"
-            />
+            <stop offset="0%" stopColor="#5b2a72" stopOpacity="0.30" />
+            <stop offset="65%" stopColor="#7d4b92" stopOpacity="0.12" />
+            <stop offset="100%" stopColor="#c9b2d4" stopOpacity="0.02" />
           </linearGradient>
         </defs>
         {gridValues.map((value) => {
           const y =
             paddingTop +
-            ((maxValue - value) / range) *
-              innerHeight;
+            ((maxValue - value) / range) * innerHeight;
           return (
             <g key={value}>
               <line
                 x1={paddingLeft}
-                x2={
-                  width -
-                  paddingRight
-                }
+                x2={width - paddingRight}
                 y1={y}
                 y2={y}
                 stroke="#d8d0c4"
@@ -639,102 +847,73 @@ function PremiumLineChart({
                 fontWeight="700"
                 fill="#75695e"
               >
-                {percent
-                  ? formatPercent(value)
-                  : axisFormatter
-                    ? axisFormatter(value)
-                    : formatter(value)}
+                {percent ? formatPercent(value) : formatter(value)}
               </text>
             </g>
           );
         })}
-        <path
-          d={areaPath}
-          fill={`url(#${gradientId})`}
-        />
+        <path d={areaPath} fill={`url(#${gradientId})`} />
         <path
           d={linePath}
           fill="none"
           stroke="#5b2a72"
-          strokeWidth="2.8"
+          strokeWidth={isValuationMultiple ? "1.55" : "2.8"}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        {points.map((point) => (
-          <g
-            key={`${point.year}-${point.index}`}
-            onMouseEnter={() =>
-              setHoveredIndex(
-                point.index
-              )
-            }
+        {xLabels.map((item) => (
+          <text
+            key={`${item.label}-${item.x}`}
+            x={item.x}
+            y={height - 8}
+            textAnchor="middle"
+            fontSize="17"
+            fontWeight="700"
+            fill="#75695e"
           >
-            <circle
-              cx={point.x}
-              cy={point.y}
-              r="11"
-              fill="transparent"
-            />
-            <circle
-              cx={point.x}
-              cy={point.y}
-              r={
-                hoveredIndex ===
-                point.index
-                  ? 4.5
-                  : 3.2
-              }
-              fill="#fdfbf5"
-              stroke="#5b2a72"
-              strokeWidth={
-                hoveredIndex ===
-                point.index
-                  ? 2.2
-                  : 1.8
-              }
-            />
-          </g>
+            {item.label}
+          </text>
         ))}
-        {xAxisYears.map((year) => {
-          const index = data.findIndex(
-            (item) =>
-              item.year === year
-          );
-          if (index < 0) {
-            return null;
-          }
-          const x =
-            data.length <= 1
-              ? paddingLeft +
-                innerWidth / 2
-              : paddingLeft +
-                (index /
-                  (data.length - 1)) *
-                  innerWidth;
-          return (
-            <text
-              key={year}
-              x={x}
-              y={height - 8}
-              textAnchor="middle"
-              fontSize="17"
-              fontWeight="700"
-              fill="#75695e"
-            >
-              {year}
-            </text>
-          );
-        })}
         {hoveredPoint && (
-          <ChartTooltip
-            x={hoveredPoint.x}
-            y={hoveredPoint.y}
-            year={hoveredPoint.year}
-            value={hoveredPoint.value}
-            growth={calculateSeriesGrowth(data, hoveredPoint.index)}
-            formatter={formatter}
-          />
+          <>
+            <line
+              x1={hoveredPoint.x}
+              x2={hoveredPoint.x}
+              y1={paddingTop}
+              y2={baselineY}
+              stroke="#8f8377"
+              strokeWidth="1"
+              strokeDasharray="3 4"
+              opacity="0.5"
+              pointerEvents="none"
+            />
+            <ChartTooltip
+              x={hoveredPoint.x}
+              y={hoveredPoint.y}
+              label={
+                hoveredPoint.date
+                  ? formatExactDate(hoveredPoint.date)
+                  : hoveredPoint.year
+              }
+              value={hoveredPoint.value}
+              growth={
+                isDatedSeries
+                  ? null
+                  : calculateSeriesGrowth(validData, hoveredPoint.index)
+              }
+              formatter={formatter}
+              compact={isValuationMultiple}
+            />
+          </>
         )}
+        <rect
+          x={paddingLeft}
+          y={paddingTop}
+          width={innerWidth}
+          height={innerHeight}
+          fill="transparent"
+          pointerEvents="all"
+        />
       </svg>
     </div>
   );
@@ -1149,11 +1328,9 @@ function PremiumCashDebtChart({
                     Math.max(cashHeight, debtHeight) +
                     18;
                 }
-
                 const previous = hoveredIndex > 0 ? data[hoveredIndex - 1] : null;
                 const cashGrowth = calculateGrowth(item.cash, previous?.cash ?? null);
                 const debtGrowth = calculateGrowth(item.debt, previous?.debt ?? null);
-
                 return (
                   <g
                     pointerEvents="none"
@@ -1263,28 +1440,130 @@ function GraphCard({
     </section>
   );
 }
+function ValuationMultipleSummary({
+  label,
+  current,
+  median5Years,
+  median10Years,
+}: {
+  label: string;
+  current: number | null | undefined;
+  median5Years: number | null | undefined;
+  median10Years: number | null | undefined;
+}) {
+  const difference = (
+    medianValue: number | null | undefined
+  ): number | null => {
+    if (
+      current === null ||
+      current === undefined ||
+      medianValue === null ||
+      medianValue === undefined ||
+      !Number.isFinite(current) ||
+      !Number.isFinite(medianValue) ||
+      medianValue <= 0
+    ) {
+      return null;
+    }
+    return ((current / medianValue) - 1) * 100;
+  };
+  const rows = [
+    { label: "Sur 5 ans", median: median5Years },
+    { label: "Sur 10 ans", median: median10Years },
+  ];
+  return (
+    <div className="mt-4 border-t border-[#e2d9cd] pt-4">
+      <p className="font-serif text-[13px] font-semibold text-[#40372f]">
+        Le {label} actuel est de{" "}
+        <span className="text-[#5b2a72]">
+          {current === null ||
+          current === undefined ||
+          !Number.isFinite(current)
+            ? "—"
+            : formatNumber(current, 2)}
+        </span>
+      </p>
+      <div className="mt-3 overflow-hidden rounded-[12px] border border-[#e2d9cd] bg-[#fffdf8]">
+        <div className="grid grid-cols-[1fr_0.8fr_1.15fr] border-b border-[#e2d9cd] px-3 py-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-[#918579]">
+          <span>Période</span>
+          <span>Médiane</span>
+          <span>Écart</span>
+        </div>
+        {rows.map((row, index) => {
+          const gap = difference(row.median);
+          const undervalued = gap !== null && gap < 0;
+          const overvalued = gap !== null && gap > 0;
+          const magnitude = gap === null ? null : Math.abs(gap);
+          return (
+            <div
+              key={row.label}
+              className={`grid grid-cols-[1fr_0.8fr_1.15fr] px-3 py-2 text-[11px] ${
+                index === 0 ? "border-b border-[#eee7de]" : ""
+              }`}
+            >
+              <span className="text-[#5f554c]">{row.label}</span>
+              <span className="font-semibold text-[#40372f]">
+                {row.median === null ||
+                row.median === undefined ||
+                !Number.isFinite(row.median)
+                  ? "—"
+                  : formatNumber(row.median, 2)}
+              </span>
+              <span
+                className={`font-semibold ${
+                  undervalued
+                    ? "text-[#2f8a54]"
+                    : overvalued
+                      ? "text-[#b23a36]"
+                      : "text-[#81766b]"
+                }`}
+              >
+                {magnitude === null
+                  ? "—"
+                  : magnitude < 0.05
+                    ? "À la médiane"
+                    : `${formatNumber(magnitude, 1)}% ${
+                        undervalued ? "sous-évalué" : "surévalué"
+                      }`}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 function ValuationNumberInput({
   value,
   onChange,
   suffix,
   step = 0.1,
 }: {
-  value: number;
-  onChange: (value: number) => void;
+  value: number | null;
+  onChange: (value: number | null) => void;
   suffix: string;
   step?: number;
 }) {
   return (
-    <div className="mx-auto flex max-w-[225px] items-center rounded-[16px] border border-[#d8cdbc] bg-[#fffdf8] px-4 py-3 shadow-inner">
+    <div className="mx-auto flex max-w-[185px] items-center rounded-[13px] border border-[#d8cdbc] bg-[#fffdf8] px-3 py-2 shadow-inner">
       <input
         type="number"
-        value={Number.isFinite(value) ? value : ""}
+        value={
+          value !== null && Number.isFinite(value)
+            ? value
+            : ""
+        }
         step={step}
         onChange={(event) => {
-          const next = Number(event.target.value);
+          const raw = event.target.value;
+          if (raw === "") {
+            onChange(null);
+            return;
+          }
+          const next = Number(raw);
           if (Number.isFinite(next)) onChange(next);
         }}
-        className="min-w-0 flex-1 bg-transparent text-center font-serif text-[20px] font-semibold text-[#40372f] outline-none"
+        className="min-w-0 flex-1 bg-transparent text-center font-serif text-[17px] font-semibold text-[#40372f] outline-none"
       />
       <span className="ml-2 text-xs font-semibold text-[#918579]">{suffix}</span>
     </div>
@@ -1300,17 +1579,19 @@ function ValuationSection({
   const [data, setData] = useState<ValuationResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [chosenFcfPerShare, setChosenFcfPerShare] = useState(0);
-  const [chosenGrowth, setChosenGrowth] = useState(0);
-  const [chosenPfcf, setChosenPfcf] = useState(0);
-  const [requiredReturn, setRequiredReturn] = useState(10);
+  const [chosenFcfPerShare, setChosenFcfPerShare] = useState<number | null>(null);
+  const [chosenGrowth, setChosenGrowth] = useState<number | null>(null);
+  const [chosenPfcf, setChosenPfcf] = useState<number | null>(null);
+  const [requiredReturn, setRequiredReturn] = useState<number | null>(null);
   const [removeSbc, setRemoveSbc] = useState(false);
+  const [showPurchaseZones, setShowPurchaseZones] = useState(false);
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       setData(null);
+      setShowPurchaseZones(false);
       try {
         const response = await fetch(
           `/api/valuation?company=${encodeURIComponent(company)}&symbol=${encodeURIComponent(symbol)}`,
@@ -1322,25 +1603,10 @@ function ValuationSection({
         }
         if (cancelled) return;
         setData(result);
-        setChosenFcfPerShare(
-          result.fcfPerShare?.average10Years ??
-            result.fcfPerShare?.average5Years ??
-            result.fcfPerShare?.current ??
-            0
-        );
-        setChosenGrowth(
-          result.growth?.average10Years ??
-            result.growth?.average5Years ??
-            result.growth?.current ??
-            8
-        );
-        setChosenPfcf(
-          result.pfcf?.average10Years ??
-            result.pfcf?.average5Years ??
-            result.pfcf?.current ??
-            20
-        );
-        setRequiredReturn(10);
+        setChosenFcfPerShare(null);
+        setChosenGrowth(null);
+        setChosenPfcf(null);
+        setRequiredReturn(null);
         setRemoveSbc(false);
       } catch (err) {
         if (!cancelled) {
@@ -1357,6 +1623,10 @@ function ValuationSection({
   }, [company, symbol]);
   const fairPrice = useMemo(() => {
     if (
+      chosenFcfPerShare === null ||
+      chosenGrowth === null ||
+      chosenPfcf === null ||
+      requiredReturn === null ||
       chosenFcfPerShare <= 0 ||
       chosenPfcf <= 0 ||
       requiredReturn <= -100 ||
@@ -1370,28 +1640,57 @@ function ValuationSection({
     return Number.isFinite(result) && result >= 0 ? result : null;
   }, [chosenFcfPerShare, chosenGrowth, chosenPfcf, requiredReturn]);
   const pfcfChart = useMemo<ValuationHistoryPoint[]>(() => {
-    const annual = (data?.pfcf?.history ?? [])
+    const daily = (data?.pfcf?.dailyHistory ?? [])
+      .map((row) => ({
+        year: row.year,
+        date: row.date,
+        value: removeSbc ? row.pfcfExSbc : row.pfcf,
+      }))
+      .filter(
+        (row): row is {
+          year: number;
+          date: string;
+          value: number;
+        } =>
+          row.value !== null &&
+          Number.isFinite(row.value)
+      );
+    if (daily.length > 1) {
+      return daily;
+    }
+    return (data?.pfcf?.history ?? [])
       .map((row) => ({
         year: row.year,
         value: removeSbc ? row.pfcfExSbc : row.pfcf,
       }))
-      .filter((row): row is { year: number; value: number } =>
-        row.value !== null && Number.isFinite(row.value)
+      .filter(
+        (row): row is { year: number; value: number } =>
+          row.value !== null && Number.isFinite(row.value)
       );
-    const ttmValue = removeSbc ? data?.ttm?.pfcfExSbc : data?.ttm?.pfcf;
-    return ttmValue !== null && ttmValue !== undefined && Number.isFinite(ttmValue)
-      ? [...annual, { year: "TTM", value: ttmValue }]
-      : annual;
   }, [data, removeSbc]);
   const psChart = useMemo<ValuationHistoryPoint[]>(() => {
-    const annual = (data?.ps?.history ?? [])
+    const daily = (data?.ps?.dailyHistory ?? [])
+      .map((row) => ({
+        year: row.year,
+        date: row.date,
+        value: row.ps,
+      }))
+      .filter((row) => Number.isFinite(row.value));
+    if (daily.length > 1) {
+      return daily;
+    }
+    return (data?.ps?.history ?? [])
       .map((row) => ({ year: row.year, value: row.ps }))
       .filter((row) => Number.isFinite(row.value));
-    const ttmValue = data?.ttm?.ps;
-    return ttmValue !== null && ttmValue !== undefined && Number.isFinite(ttmValue)
-      ? [...annual, { year: "TTM", value: ttmValue }]
-      : annual;
   }, [data]);
+  const pocfChart = useMemo<ValuationHistoryPoint[]>(() =>
+    (data?.pocf?.dailyHistory ?? []).map((row) => ({
+      year: row.year, date: row.date, value: row.pocf,
+    })).filter((row) => Number.isFinite(row.value)), [data]);
+  const peChart = useMemo<ValuationHistoryPoint[]>(() =>
+    (data?.pe?.dailyHistory ?? []).map((row) => ({
+      year: row.year, date: row.date, value: row.pe,
+    })).filter((row) => Number.isFinite(row.value)), [data]);
   const purchaseZones = useMemo(() => {
     return Array.from({ length: 11 }, (_, index) => {
       const margin = index * 10;
@@ -1450,72 +1749,94 @@ function ValuationSection({
         </div>
         <div className="mt-7 h-px bg-[#d9d0c3]" />
       </header>
-      <section className="rounded-[26px] border border-[#ded6ca] bg-[#fdfbf5] p-5 shadow-[0_8px_30px_rgba(84,68,48,0.06)] sm:p-7">
-        <div className="mb-6">
-          <h3 className="font-serif text-[25px] font-semibold text-[#40372f]">Discounted Cash Flow</h3>
+      <section className="mx-auto max-w-[1240px] rounded-[18px] border border-[#ded6ca] bg-[#fdfbf5] p-4 shadow-[0_8px_30px_rgba(84,68,48,0.06)] sm:p-4">
+        <div className="mb-3">
+          <h3 className="font-serif text-[19px] font-semibold text-[#40372f]">Discounted Cash Flow</h3>
           <p className="mt-1 text-[12px] text-[#9a8f83]">Projection sur 10 ans du Free Cash Flow par action</p>
         </div>
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_310px]">
-          <div className="overflow-x-auto rounded-[22px] border border-[#ded6ca]">
-            <table className="w-full min-w-[900px] border-collapse bg-[#fffdf8] text-center">
+        <div
+          className="grid items-stretch gap-4"
+          style={{ gridTemplateColumns: "minmax(0, 1fr) 270px" }}
+        >
+          <div className="rounded-[16px] border border-[#ded6ca]">
+            <table className="w-full table-fixed border-collapse bg-[#fffdf8] text-center">
+              <colgroup>
+                <col className="w-[29%]" />
+                <col className="w-[13%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+                <col className="w-[26%]" />
+              </colgroup>
               <thead>
                 <tr className="border-b border-[#ded6ca]">
-                  <th className="w-[28%] border-r border-[#ded6ca] px-5 py-5" />
-                  <th colSpan={3} className="border-r border-[#ded6ca] px-5 py-5 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#8f8377]">Historique</th>
-                  <th className="px-5 py-5 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#5b2a72]">Hypothèses</th>
+                  <th className="w-[28%] border-r border-[#ded6ca] px-2.5 py-1.5" />
+                  <th colSpan={3} className="border-r border-[#ded6ca] px-2.5 py-1.5 text-[9px] font-semibold uppercase tracking-[0.22em] text-[#8f8377]">Historique</th>
+                  <th className="px-2.5 py-1.5 text-[9px] font-semibold uppercase tracking-[0.22em] text-[#5b2a72]">Hypothèses</th>
                 </tr>
                 <tr className="border-b border-[#ded6ca]">
-                  <th className="border-r border-[#ded6ca] px-5 py-4" />
-                  <th className="border-r border-[#ded6ca] px-5 py-4 text-[10px] font-semibold uppercase tracking-[0.15em] text-[#918579]">Actuel</th>
-                  <th className="border-r border-[#ded6ca] px-5 py-4 text-[10px] font-semibold uppercase tracking-[0.15em] text-[#918579]">Moyenne 5 ans</th>
-                  <th className="border-r border-[#ded6ca] px-5 py-4 text-[10px] font-semibold uppercase tracking-[0.15em] text-[#918579]">Moyenne 10 ans</th>
-                  <th className="px-5 py-4 text-[10px] font-semibold uppercase tracking-[0.15em] text-[#918579]">Valeur choisie</th>
+                  <th className="border-r border-[#ded6ca] px-2.5 py-1.5" />
+                  <th className="border-r border-[#ded6ca] px-2.5 py-1.5 text-[9px] font-semibold uppercase tracking-[0.15em] text-[#918579]">Actuel</th>
+                  <th className="border-r border-[#ded6ca] px-2.5 py-1.5 text-[9px] font-semibold uppercase tracking-[0.15em] text-[#918579]">Moyenne 5 ans</th>
+                  <th className="border-r border-[#ded6ca] px-2.5 py-1.5 text-[9px] font-semibold uppercase tracking-[0.15em] text-[#918579]">Moyenne 10 ans</th>
+                  <th className="px-2.5 py-1.5 text-[9px] font-semibold uppercase tracking-[0.15em] text-[#918579]">Valeur choisie</th>
                 </tr>
               </thead>
               <tbody>
                 <tr className="border-b border-[#ded6ca]">
-                  <td className="border-r border-[#ded6ca] px-7 py-6 text-left">
-                    <p className="font-serif text-[18px] font-semibold text-[#40372f]">Free Cash Flow par action</p>
-                    <p className="mt-1 text-[10px] text-[#9a8f83]">FCF ÷ actions diluées</p>
+                  <td className="border-r border-[#ded6ca] px-4 py-3 text-left">
+                    <p className="font-serif text-[14px] font-semibold text-[#40372f]">Free Cash Flow par action</p>
+                    <p className="mt-1 text-[9px] text-[#9a8f83]">FCF ÷ actions diluées</p>
                   </td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{money(data.fcfPerShare?.current)}</td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{money(data.fcfPerShare?.average5Years)}</td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{money(data.fcfPerShare?.average10Years)}</td>
-                  <td className="px-5 py-4"><ValuationNumberInput value={chosenFcfPerShare} onChange={setChosenFcfPerShare} suffix={currency} step={0.01} /></td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{money(data.fcfPerShare?.current)}</td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{money(data.fcfPerShare?.average5Years)}</td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{money(data.fcfPerShare?.average10Years)}</td>
+                  <td className="px-2.5 py-1.5"><ValuationNumberInput value={chosenFcfPerShare} onChange={setChosenFcfPerShare} suffix={currency} step={0.01} /></td>
                 </tr>
                 <tr className="border-b border-[#ded6ca]">
-                  <td className="border-r border-[#ded6ca] px-7 py-6 text-left">
-                    <p className="font-serif text-[18px] font-semibold text-[#40372f]">Taux de croissance</p>
-                    <p className="mt-1 text-[10px] text-[#9a8f83]">Croissance annuelle du FCF par action</p>
+                  <td className="border-r border-[#ded6ca] px-4 py-3 text-left">
+                    <p className="font-serif text-[14px] font-semibold text-[#40372f]">Taux de croissance</p>
+                    <p className="mt-1 text-[9px] text-[#9a8f83]">Croissance annuelle du FCF par action</p>
                   </td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{percent(data.growth?.current)}</td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{percent(data.growth?.average5Years)}</td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{percent(data.growth?.average10Years)}</td>
-                  <td className="px-5 py-4"><ValuationNumberInput value={chosenGrowth} onChange={setChosenGrowth} suffix="%" step={0.1} /></td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{percent(data.growth?.current)}</td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{percent(data.growth?.average5Years)}</td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{percent(data.growth?.average10Years)}</td>
+                  <td className="px-2.5 py-1.5"><ValuationNumberInput value={chosenGrowth} onChange={setChosenGrowth} suffix="%" step={0.1} /></td>
                 </tr>
                 <tr>
-                  <td className="border-r border-[#ded6ca] px-7 py-6 text-left">
-                    <p className="font-serif text-[18px] font-semibold text-[#40372f]">Ratio P/FCF</p>
-                    <p className="mt-1 text-[10px] text-[#9a8f83]">Prix ÷ Free Cash Flow par action</p>
+                  <td className="border-r border-[#ded6ca] px-4 py-3 text-left">
+                    <p className="font-serif text-[14px] font-semibold text-[#40372f]">Ratio P/FCF</p>
+                    <p className="mt-1 text-[9px] text-[#9a8f83]">Prix ÷ Free Cash Flow par action</p>
                   </td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{multiple(data.pfcf?.current)}</td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{multiple(data.pfcf?.average5Years)}</td>
-                  <td className="border-r border-[#ded6ca] px-5 py-6 font-serif text-[18px] font-semibold">{multiple(data.pfcf?.average10Years)}</td>
-                  <td className="px-5 py-4"><ValuationNumberInput value={chosenPfcf} onChange={setChosenPfcf} suffix="×" step={0.1} /></td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{multiple(data.pfcf?.current)}</td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{multiple(data.pfcf?.average5Years)}</td>
+                  <td className="border-r border-[#ded6ca] px-3 py-3 font-serif text-[14px] font-semibold">{multiple(data.pfcf?.average10Years)}</td>
+                  <td className="px-2.5 py-1.5"><ValuationNumberInput value={chosenPfcf} onChange={setChosenPfcf} suffix="×" step={0.1} /></td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <aside className="flex min-h-[360px] flex-col justify-between rounded-[22px] border border-[#ded6ca] bg-[#fffdf8] px-7 py-8 text-center">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#918579]">Rendement exigé</p>
-              <div className="mt-6"><ValuationNumberInput value={requiredReturn} onChange={setRequiredReturn} suffix="%" step={0.1} /></div>
-              <p className="mx-auto mt-4 max-w-[220px] text-[10px] leading-5 text-[#9a8f83]">Rendement annuel utilisé pour actualiser le prix estimé dans 10 ans.</p>
+          <aside className="flex h-full min-h-[230px] flex-col rounded-[16px] border border-[#ded6ca] bg-[#fffdf8] px-4 py-4 text-center">
+            <div className="flex flex-1 flex-col justify-center">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[#918579]">Rendement exigé</p>
+              <div className="mt-3"><ValuationNumberInput value={requiredReturn} onChange={setRequiredReturn} suffix="%" step={0.1} /></div>
+              <p className="mx-auto mt-3 max-w-[210px] text-[9px] leading-4 text-[#9a8f83]">Rendement annuel utilisé pour actualiser le prix estimé dans 10 ans.</p>
             </div>
-            <div className="mt-8 border-t border-[#ded6ca] pt-8">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#918579]">Prix juste estimé</p>
-              <p className="mt-5 font-serif text-[42px] font-semibold tracking-[-0.04em] text-[#5b2a72]">{money(fairPrice)}</p>
-              <p className="mt-2 text-[10px] uppercase tracking-[0.16em] text-[#a0968a]">Projection sur 10 ans</p>
+            <div className="flex flex-1 flex-col justify-center border-t border-[#ded6ca] pt-4">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[#918579]">Prix juste estimé</p>
+              <p className="mt-3 font-serif text-[29px] font-semibold tracking-[-0.04em] text-[#5b2a72]">{money(fairPrice)}</p>
+              <p className="mt-2 text-[9px] uppercase tracking-[0.16em] text-[#a0968a]">Projection sur 10 ans</p>
+              {fairPrice !== null && (
+                <div className="mt-3 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowPurchaseZones(true)}
+                    className="relative w-fit flex-none border-0 bg-transparent p-0 text-[17px] text-slate-600 transition-colors duration-200 hover:text-[#6b1f1f] after:absolute after:left-0 after:-bottom-0.5 after:h-px after:w-0 after:bg-[#6b1f1f] after:transition-all after:duration-300 hover:after:w-full"
+                    style={{ fontFamily: "var(--font-graphique)" }}
+                  >
+                    Voir les zones d'achat
+                  </button>
+                </div>
+              )}
             </div>
           </aside>
         </div>
@@ -1533,38 +1854,100 @@ function ValuationSection({
               Retirer les SBC
             </button>
           </div>
-          <PremiumLineChart data={pfcfChart} valueKey={removeSbc ? "pfcf-ex-sbc" : "pfcf"} formatter={(value) => value === null ? "—" : `${formatNumber(value, 2)}×`} axisFormatter={(value) => formatNumber(value, 2)} chartHeight={245} />
+          <PremiumLineChart data={pfcfChart} valueKey={removeSbc ? "pfcf-ex-sbc" : "pfcf"} formatter={(value) => value === null ? "—" : formatNumber(value, 2)} axisFormatter={(value) => formatNumber(value, 2)} chartHeight={245} />
+          <ValuationMultipleSummary label="P/FCF" current={data.pfcf?.current} median5Years={data.pfcf?.median5Years} median10Years={data.pfcf?.median10Years} />
         </GraphCard>
         <GraphCard title="Prix / Chiffre d'affaires" description="Évolution historique du multiple Prix / Chiffre d'affaires">
-          <PremiumLineChart data={psChart} valueKey="price-to-sales" formatter={(value) => value === null ? "—" : `${formatNumber(value, 2)}×`} axisFormatter={(value) => formatNumber(value, 2)} chartHeight={245} />
+          <PremiumLineChart data={psChart} valueKey="price-to-sales" formatter={(value) => value === null ? "—" : formatNumber(value, 2)} axisFormatter={(value) => formatNumber(value, 2)} chartHeight={245} />
+          <ValuationMultipleSummary label="P/S" current={data.ps?.current} median5Years={data.ps?.median5Years} median10Years={data.ps?.median10Years} />
         </GraphCard>
       </div>
-      <div className="mx-auto mt-4 max-w-[650px]">
-        <GraphCard title="Zone d'achat" description="Prix correspondant à chaque marge de sécurité appliquée au prix juste estimé">
-          <div className="px-2 pb-1 pt-2 sm:px-4">
-            <div className="flex h-[185px] items-end justify-between gap-2 border-b border-[#d8d0c4]">
-              {purchaseZones.map((zone) => {
-                const maxPrice = fairPrice ?? 0;
-                const height = zone.price === null || maxPrice <= 0 ? 0 : Math.max(2, (zone.price / maxPrice) * 150);
-                return (
-                  <div key={zone.margin} className="flex min-w-0 flex-1 flex-col items-center justify-end">
-                    <span className="mb-2 hidden font-serif text-[10px] text-[#6f6358] sm:block">{zone.price === null ? "—" : `${formatNumber(zone.price, 0)} €`}</span>
-                    <div className="w-full max-w-[42px] rounded-t-[7px] bg-[#5b2a72]" style={{ height }} />
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-3 flex justify-between gap-2">
-              {purchaseZones.map((zone) => (
-                <span key={zone.margin} className="min-w-0 flex-1 text-center text-[9px] font-semibold text-[#918579]">{zone.margin}%</span>
-              ))}
-            </div>
-            {data.currentPrice !== null && data.currentPrice !== undefined && (
-              <p className="mt-5 text-center font-serif text-xs text-[#8b6b22]">Cours actuel : {money(data.currentPrice)}</p>
-            )}
-          </div>
+      <div className="mx-auto mt-4 grid max-w-[1180px] grid-cols-1 gap-4 lg:grid-cols-2">
+        <GraphCard title="Prix / Cash-flow opérationnel" description="Évolution historique du multiple Prix / Cash-flow opérationnel">
+          <PremiumLineChart data={pocfChart} valueKey="price-to-operating-cash-flow" formatter={(value) => value === null ? "—" : formatNumber(value, 2)} axisFormatter={(value) => formatNumber(value, 2)} chartHeight={245} />
+          <ValuationMultipleSummary label="P/OCF" current={data.pocf?.current} median5Years={data.pocf?.median5Years} median10Years={data.pocf?.median10Years} />
+        </GraphCard>
+        <GraphCard title="Prix / Bénéfice net" description="Évolution historique du multiple Prix / Bénéfice net">
+          <PremiumLineChart data={peChart} valueKey="price-to-earnings" formatter={(value) => value === null ? "—" : formatNumber(value, 2)} axisFormatter={(value) => formatNumber(value, 2)} chartHeight={245} />
+          <ValuationMultipleSummary label="P/E" current={data.pe?.current} median5Years={data.pe?.median5Years} median10Years={data.pe?.median10Years} />
         </GraphCard>
       </div>
+      {showPurchaseZones && fairPrice !== null && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-[#2d251f]/30 p-4 backdrop-blur-[2px]"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowPurchaseZones(false);
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="purchase-zones-title"
+            className="w-[min(94vw,1040px)] rounded-[22px] border border-[#d8cdbc] bg-[#fffdf8] p-6 shadow-[0_20px_65px_rgba(56,42,31,0.20)]"
+          >
+            <div className="flex items-start">
+              <div>
+                <h3
+                  id="purchase-zones-title"
+                  className="font-serif text-[22px] font-semibold tracking-[-0.02em] text-[#40372f]"
+                >
+                  Marge de sécurité et Zones d'achat
+                </h3>
+                <p className="mt-1 text-[10px] text-[#918579]">
+                  Prix juste estimé · {money(fairPrice)}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 px-1">
+              <div className="flex h-[230px] items-end justify-between gap-5 border-b border-[#d8d0c4]">
+                {purchaseZones.map((zone) => {
+                  const maxPrice = fairPrice;
+                  const height =
+                    zone.price === null || maxPrice <= 0
+                      ? 0
+                      : Math.max(2, (zone.price / maxPrice) * 172);
+                  return (
+                    <div
+                      key={zone.margin}
+                      className="flex min-w-0 flex-1 flex-col items-center justify-end"
+                    >
+                      <span
+                        className="mb-2 whitespace-nowrap font-serif text-[12px] font-semibold text-[#5b2a72]"
+                      >
+                        {zone.price === null
+                          ? "—"
+                          : `${formatNumber(zone.price, 0)}\u00A0€`}
+                      </span>
+                      <div
+                        className="w-full max-w-[42px] rounded-t-[5px] bg-[#5b2a72]"
+                        style={{ height }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex justify-between gap-3">
+                {purchaseZones.map((zone) => (
+                  <span
+                    key={zone.margin}
+                    className="min-w-0 flex-1 text-center text-[10px] font-semibold text-[#5b2a72]"
+                  >
+                    {zone.margin === 0 ? "0%" : `−${zone.margin}%`}
+                  </span>
+                ))}
+              </div>
+            </div>
+            {data.currentPrice !== null &&
+              data.currentPrice !== undefined && (
+                <p className="mt-3 text-center font-serif text-[10px] text-[#8b6b22]">
+                  Cours actuel : {money(data.currentPrice)}
+                </p>
+              )}
+          </section>
+        </div>
+      )}
     </section>
   );
 }
@@ -1600,6 +1983,7 @@ export default function RecherchePage() {
   const [results, setResults] = useState<CompanySearchResult[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<CompanySearchResult | null>(null);
   const [financials, setFinancials] = useState<CompanyFinancialsResponse | null>(null);
+  const [stockAnalysis, setStockAnalysis] = useState<StockAnalysisResponse | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [financialsLoading, setFinancialsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1612,6 +1996,7 @@ export default function RecherchePage() {
     setResults([]);
     setSelectedCompany(null);
     setFinancials(null);
+    setStockAnalysis(null);
     try {
       const response = await fetch(`/api/company-search?q=${encodeURIComponent(value)}`);
       const data = (await response.json()) as CompanySearchResponse;
@@ -1631,12 +2016,39 @@ export default function RecherchePage() {
     setResults([]);
     setError(null);
     setFinancials(null);
+    setStockAnalysis(null);
     setFinancialsLoading(true);
     try {
-      const response = await fetch(`/api/company-financials?symbol=${encodeURIComponent(company.symbol)}`, { cache: "no-store" });
-      const data = (await response.json()) as CompanyFinancialsResponse;
-      if (!response.ok || !data.success) throw new Error(data.error ?? "Impossible de calculer les données de cette entreprise.");
+      const stockAnalysisTicker = company.symbol
+        .trim()
+        .toUpperCase()
+        .replace(/\.PA$/, "");
+      const [financialsResponse, stockAnalysisResponse] =
+        await Promise.all([
+          fetch(
+            `/api/company-financials?symbol=${encodeURIComponent(company.symbol)}`,
+            { cache: "no-store" }
+          ),
+          fetch(
+            `/api/financials/stockanalysis?ticker=${encodeURIComponent(stockAnalysisTicker)}`,
+            { cache: "no-store" }
+          ),
+        ]);
+      const data =
+        (await financialsResponse.json()) as CompanyFinancialsResponse;
+      if (!financialsResponse.ok || !data.success) {
+        throw new Error(
+          data.error ??
+            "Impossible de calculer les données de cette entreprise."
+        );
+      }
+      let stockData: StockAnalysisResponse | null = null;
+      if (stockAnalysisResponse.ok) {
+        stockData =
+          (await stockAnalysisResponse.json()) as StockAnalysisResponse;
+      }
       setFinancials(data);
+      setStockAnalysis(stockData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Une erreur est survenue pendant l'analyse.");
     } finally {
@@ -1676,18 +2088,78 @@ export default function RecherchePage() {
       : row.cashAndShortTermInvestments / 1_000_000,
     debt: row.totalDebt === null ? null : row.totalDebt / 1_000_000,
   })), [history]);
+  const criteriaEngine = useMemo(() => {
+    if (!financials?.annual || !selectedCompany) return null;
+    const stockAnalysisNetDebt =
+      stockAnalysis?.balanceSheet?.netDebt ?? null;
+    const automaticNetDebt =
+      stockAnalysisNetDebt !== null &&
+      Number.isFinite(stockAnalysisNetDebt)
+        ? stockAnalysisNetDebt
+        : financials.latestQuarterlyBalanceSheet?.netDebt ?? null;
+    const latestStockAnalysisUfcf =
+      stockAnalysis?.annualCashFlow &&
+      stockAnalysis.annualCashFlow.unleveredFreeCashFlow !== null &&
+      Number.isFinite(
+        stockAnalysis.annualCashFlow.unleveredFreeCashFlow
+      )
+        ? stockAnalysis.annualCashFlow.unleveredFreeCashFlow
+        : null;
+    return calculateCriteriaFromHistory(
+      selectedCompany.symbol,
+      financials.annual,
+      automaticNetDebt,
+      latestStockAnalysisUfcf
+    );
+  }, [financials, selectedCompany, stockAnalysis]);
   const criteria = useMemo<CriterionCard[]>(() => {
-    const c = financials?.criteria;
+    const c = criteriaEngine;
     if (!c) return [];
     return [
-      { title: "Croissance du chiffre d'affaires", subtitle: "par an sur les 5 dernières années, doit être supérieur à 10%", value: c.revenueGrowthCagr, suffix: " %", passed: c.revenueGrowthCagr === null ? null : c.revenueGrowthCagr > 10 },
-      { title: "Croissance du Free cash flow", subtitle: "par an sur les 5 dernières années, doit être supérieur à 10%", value: c.freeCashFlowGrowthCagr, suffix: " %", passed: c.freeCashFlowGrowthCagr === null ? null : c.freeCashFlowGrowthCagr > 10 },
-      { title: "Super ROIC", subtitle: "Super ROIC en moyenne sur 5 ans, doit être supérieur à 15%", value: c.superRoic, suffix: " %", passed: c.superRoic === null ? null : c.superRoic > 15 },
-      { title: "Dette nette / Free cash flow", subtitle: "au dernier trimestre, doit être inférieur à 3", value: c.netDebtToFCF, suffix: "", passed: c.netDebtToFCF === null ? null : c.netDebtToFCF < 3 },
-      { title: "Nombre d'actions en circulation", subtitle: "sur les 5 dernières années, doit être inférieur ou égal à 0%", value: c.dilutedSharesChange, suffix: " %", passed: c.dilutedSharesChange === null ? null : c.dilutedSharesChange <= 0 },
-      { title: "Marge du Free cash flow", subtitle: "en moyenne sur 5 ans, doit être supérieur à 10%", value: c.averageFcfMargin, suffix: " %", passed: c.averageFcfMargin === null ? null : c.averageFcfMargin > 10 },
+      {
+        title: "Croissance du chiffre d'affaires",
+        subtitle: "par an sur les 5 dernières années, doit être supérieur à 10%",
+        value: c.revenueGrowthCagr,
+        suffix: " %",
+        passed: c.revenueGrowthCagr === null ? null : c.revenueGrowthCagr > 10,
+      },
+      {
+        title: "Croissance du Free cash flow",
+        subtitle: "par an sur les 5 dernières années, doit être supérieur à 10%",
+        value: c.freeCashFlowGrowthCagr,
+        suffix: " %",
+        passed: c.freeCashFlowGrowthCagr === null ? null : c.freeCashFlowGrowthCagr > 10,
+      },
+      {
+        title: "Super ROIC",
+        subtitle: "Super ROIC en moyenne sur 5 ans, doit être supérieur à 15%",
+        value: c.superRoic,
+        suffix: " %",
+        passed: c.superRoic === null ? null : c.superRoic > 15,
+      },
+      {
+        title: "Dette nette / Free cash flow",
+        subtitle: "au dernier trimestre, doit être inférieur à 3",
+        value: c.netDebtToFCF,
+        suffix: "",
+        passed: c.netDebtToFCF === null ? null : c.netDebtToFCF < 3,
+      },
+      {
+        title: "Nombre d'actions en circulation",
+        subtitle: "sur les 5 dernières années, doit être inférieur ou égal à 0%",
+        value: c.dilutedSharesChange,
+        suffix: " %",
+        passed: c.dilutedSharesChange === null ? null : c.dilutedSharesChange <= 0,
+      },
+      {
+        title: "Marge du Free cash flow",
+        subtitle: "en moyenne sur 5 ans, doit être supérieur à 10%",
+        value: c.averageFcfMargin,
+        suffix: " %",
+        passed: c.averageFcfMargin === null ? null : c.averageFcfMargin > 10,
+      },
     ];
-  }, [financials]);
+  }, [criteriaEngine]);
   return (
     <main
       className={`${gothicFont.variable} min-h-screen px-4 pb-20 text-[#40372f] sm:px-6 lg:px-10`}

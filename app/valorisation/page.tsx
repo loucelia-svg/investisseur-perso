@@ -562,6 +562,13 @@ function PfcfChart({
   average:
     number | null;
 }) {
+  const [
+    hoveredIndex,
+    setHoveredIndex,
+  ] = useState<
+    number | null
+  >(null);
+
   const valid =
     data.filter(
       (row) =>
@@ -570,6 +577,7 @@ function PfcfChart({
         ) &&
         row.pfcf > 0
     );
+
   if (
     valid.length < 2
   ) {
@@ -580,6 +588,7 @@ function PfcfChart({
       </div>
     );
   }
+
   const width = 650;
   const height = 315;
   const paddingLeft = 55;
@@ -594,11 +603,13 @@ function PfcfChart({
     height -
     paddingTop -
     paddingBottom;
+
   const values =
     valid.map(
       (row) =>
         row.pfcf
     );
+
   if (
     average !== null &&
     Number.isFinite(
@@ -609,6 +620,7 @@ function PfcfChart({
       average
     );
   }
+
   const minValue =
     Math.min(
       ...values
@@ -632,6 +644,7 @@ function PfcfChart({
     range * 0.15;
   const yRange =
     maxY - minY || 1;
+
   const xFor = (
     index: number
   ) =>
@@ -640,6 +653,7 @@ function PfcfChart({
       (valid.length -
         1)) *
       chartWidth;
+
   const yFor = (
     value: number
   ) =>
@@ -647,6 +661,7 @@ function PfcfChart({
     ((maxY - value) /
       yRange) *
       chartHeight;
+
   const points =
     valid
       .map(
@@ -661,6 +676,7 @@ function PfcfChart({
           )}`
       )
       .join(" ");
+
   const areaPoints =
     `${paddingLeft},${
       paddingTop +
@@ -672,6 +688,7 @@ function PfcfChart({
       paddingTop +
       chartHeight
     }`;
+
   const averageY =
     average !== null &&
     Number.isFinite(
@@ -679,19 +696,141 @@ function PfcfChart({
     )
       ? yFor(average)
       : null;
+
   const labelEvery =
     valid.length > 12
       ? Math.ceil(
           valid.length / 7
         )
       : 1;
+
+  const hoveredRow =
+    hoveredIndex !== null
+      ? valid[
+          hoveredIndex
+        ]
+      : null;
+
+  const hoveredX =
+    hoveredIndex !== null
+      ? xFor(
+          hoveredIndex
+        )
+      : null;
+
+  const hoveredY =
+    hoveredRow
+      ? yFor(
+          hoveredRow.pfcf
+        )
+      : null;
+
+  const handleMouseMove = (
+    event: React.MouseEvent<
+      SVGSVGElement
+    >
+  ) => {
+    const rect =
+      event.currentTarget.getBoundingClientRect();
+
+    if (
+      rect.width <= 0
+    ) {
+      return;
+    }
+
+    const svgX =
+      ((event.clientX -
+        rect.left) /
+        rect.width) *
+      width;
+
+    const clampedX =
+      Math.min(
+        width -
+          paddingRight,
+        Math.max(
+          paddingLeft,
+          svgX
+        )
+      );
+
+    const ratio =
+      (clampedX -
+        paddingLeft) /
+      chartWidth;
+
+    const index =
+      Math.round(
+        ratio *
+          (valid.length -
+            1)
+      );
+
+    setHoveredIndex(
+      Math.min(
+        valid.length - 1,
+        Math.max(
+          0,
+          index
+        )
+      )
+    );
+  };
+
+  const tooltipWidth =
+    118;
+  const tooltipHeight =
+    58;
+
+  let tooltipX =
+    hoveredX !== null
+      ? hoveredX + 12
+      : 0;
+
+  if (
+    tooltipX +
+      tooltipWidth >
+    width -
+      paddingRight
+  ) {
+    tooltipX =
+      (hoveredX ?? 0) -
+      tooltipWidth -
+      12;
+  }
+
+  let tooltipY =
+    hoveredY !== null
+      ? hoveredY -
+        tooltipHeight -
+        12
+      : 0;
+
+  if (
+    tooltipY <
+    paddingTop
+  ) {
+    tooltipY =
+      (hoveredY ?? 0) +
+      12;
+  }
+
   return (
     <div className="w-full">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="w-full"
+        className="w-full cursor-crosshair"
         role="img"
         aria-label="Historique Prix sur Free Cash Flow"
+        onMouseMove={
+          handleMouseMove
+        }
+        onMouseLeave={() =>
+          setHoveredIndex(
+            null
+          )
+        }
       >
         <defs>
           <linearGradient
@@ -713,6 +852,7 @@ function PfcfChart({
             />
           </linearGradient>
         </defs>
+
         {[0, 1, 2, 3, 4].map(
           (index) => {
             const ratio =
@@ -725,6 +865,7 @@ function PfcfChart({
               paddingTop +
               chartHeight *
                 ratio;
+
             return (
               <g key={index}>
                 <line
@@ -760,6 +901,7 @@ function PfcfChart({
             );
           }
         )}
+
         {averageY !==
           null && (
           <>
@@ -804,12 +946,14 @@ function PfcfChart({
             </text>
           </>
         )}
+
         <polygon
           points={
             areaPoints
           }
           fill="url(#pfcfArea)"
         />
+
         <polyline
           points={points}
           fill="none"
@@ -818,69 +962,163 @@ function PfcfChart({
           strokeLinecap="round"
           strokeLinejoin="round"
         />
+
         {valid.map(
           (
             row,
             index
-          ) => {
-            const x =
-              xFor(index);
-            const y =
-              yFor(
-                row.pfcf
-              );
-            return (
-              <g
+          ) =>
+            (index %
+              labelEvery ===
+              0 ||
+              index ===
+                valid.length -
+                  1) && (
+              <text
                 key={
                   row.year
                 }
-              >
-                <circle
-                  cx={x}
-                  cy={y}
-                  r="3.5"
-                  fill="#fdfbf5"
-                  stroke="#5b2a72"
-                  strokeWidth="2.2"
-                >
-                  <title>
-                    {
-                      row.year
-                    }{" "}
-                    —{" "}
-                    {formatNumber(
-                      row.pfcf,
-                      2
-                    )}
-                    ×
-                  </title>
-                </circle>
-                {(index %
-                  labelEvery ===
-                  0 ||
-                  index ===
-                    valid.length -
-                      1) && (
-                  <text
-                    x={x}
-                    y={
-                      height -
-                      15
-                    }
-                    textAnchor="middle"
-                    fontSize="10"
-                    fontWeight="600"
-                    fill="#75695e"
-                  >
-                    {
-                      row.year
-                    }
-                  </text>
+                x={xFor(
+                  index
                 )}
-              </g>
-            );
-          }
+                y={
+                  height -
+                  15
+                }
+                textAnchor="middle"
+                fontSize="10"
+                fontWeight="600"
+                fill="#75695e"
+              >
+                {
+                  row.year
+                }
+              </text>
+            )
         )}
+
+        {hoveredRow &&
+          hoveredX !==
+            null &&
+          hoveredY !==
+            null && (
+            <g
+              pointerEvents="none"
+            >
+              <line
+                x1={
+                  hoveredX
+                }
+                y1={
+                  paddingTop
+                }
+                x2={
+                  hoveredX
+                }
+                y2={
+                  paddingTop +
+                  chartHeight
+                }
+                stroke="#8f8377"
+                strokeWidth="1"
+                strokeDasharray="3 4"
+                opacity="0.55"
+              />
+
+              <circle
+                cx={
+                  hoveredX
+                }
+                cy={
+                  hoveredY
+                }
+                r="4.5"
+                fill="#5b2a72"
+                stroke="#fdfbf5"
+                strokeWidth="2"
+              />
+
+              <g
+                style={{
+                  filter:
+                    "drop-shadow(0px 6px 14px rgba(65, 52, 40, 0.18))",
+                }}
+              >
+                <rect
+                  x={
+                    tooltipX
+                  }
+                  y={
+                    tooltipY
+                  }
+                  width={
+                    tooltipWidth
+                  }
+                  height={
+                    tooltipHeight
+                  }
+                  rx="9"
+                  fill="#fffdf8"
+                  stroke="#d4c9bb"
+                  strokeWidth="1"
+                />
+                <text
+                  x={
+                    tooltipX +
+                    12
+                  }
+                  y={
+                    tooltipY +
+                    22
+                  }
+                  fontSize="11"
+                  fontWeight="700"
+                  fontFamily="Georgia, serif"
+                  fill="#75695e"
+                >
+                  {
+                    hoveredRow.year
+                  }
+                </text>
+                <text
+                  x={
+                    tooltipX +
+                    12
+                  }
+                  y={
+                    tooltipY +
+                    43
+                  }
+                  fontSize="15"
+                  fontWeight="700"
+                  fill="#40372f"
+                >
+                  {formatNumber(
+                    hoveredRow.pfcf,
+                    2
+                  )}
+                  ×
+                </text>
+              </g>
+            </g>
+          )}
+
+        <rect
+          x={
+            paddingLeft
+          }
+          y={
+            paddingTop
+          }
+          width={
+            chartWidth
+          }
+          height={
+            chartHeight
+          }
+          fill="transparent"
+          pointerEvents="all"
+        />
       </svg>
     </div>
   );
